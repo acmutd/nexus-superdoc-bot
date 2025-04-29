@@ -1,0 +1,4 @@
+/node_modules 
+*.env 
+client_secret_google_doc.json
+seismic-glow-448903-h4-343b85dba5e9.json

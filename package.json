@@ -1,0 +1,88 @@
+{
+
+  "name": "discord-tomfoolery-",
+
+  "version": "1.0.0",
+
+  "main": "index.cjs",
+
+  "scripts": {
+
+    "test": "echo \"Error: no test specified\" && exit 1",
+
+    "deploy": "node deploy-commands.cjs",
+
+    "dev": "nodemon index.cjs"
+
+  },
+
+  "repository": {
+
+    "type": "git",
+
+    "url": "git+https://github.com/Braindeeeaad/discord-tomfoolery-.git"
+
+  },
+
+  "author": "",
+
+  "license": "ISC",
+
+  "bugs": {
+
+    "url": "https://github.com/Braindeeeaad/discord-tomfoolery-/issues"
+
+  },
+
+  "homepage": "https://github.com/Braindeeeaad/discord-tomfoolery-#readme",
+
+  "keywords": [],
+
+  "description": "",
+
+  "dependencies": {
+
+    "@google/generative-ai": "^0.21.0",
+
+    "@googleapis/docs": "^3.3.0",
+
+    "aws-sdk": "^2.1692.0",
+
+    "axios": "^1.7.9",
+
+    "discord.js": "^14.18.0",
+
+    "dotenv": "^16.4.7",
+
+    "esm": "^3.2.25",
+
+    "gapi-script": "^1.2.0",
+
+    "google-auth-library": "^9.15.1",
+
+    "googleapis": "^144.0.0",
+
+    "markdown-it": "^14.1.0",
+
+    "node-fetch": "^3.3.2",
+
+    "nodemon": "^3.1.9",
+
+    "pdfjs-dist": "^4.10.38",
+
+    "puppeteer": "^24.2.1",
+
+    "redis": "^4.7.0"
+
+  },
+
+  "devDependencies": {
+
+    "@eslint/js": "^9.20.0",
+
+    "eslint": "^9.20.1"
+
+  }
+
+}
+
