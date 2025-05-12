@@ -135,8 +135,3 @@ discord-tomfoolery-/
 ```
 
 
-## Contributing
-
-(No explicit contributing guidelines were found in the codebase. Please refer to standard open source contribution practices if you wish to contribute.)
-
-
