@@ -16,7 +16,7 @@ from dotenv import load_dotenv
 import os
 import time
 import traceback
-load_dotenv()
+load_dotenv(os.path.join(os.environ.get('LAMBDA_TASK_ROOT', ''), '.env'))
 
 
 MIN_BLOCK_LEN = 10

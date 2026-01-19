@@ -27,7 +27,7 @@ from io import BytesIO
 from dotenv import load_dotenv
 import os
 import time
-load_dotenv()
+load_dotenv(os.path.join(os.environ.get('LAMBDA_TASK_ROOT', ''), '.env'))
 
 
 
@@ -138,6 +138,9 @@ class superdoc():
         #update googledoc heading named range
         self.docs_editor.update_heading(old_heading=old_heading,new_heading=new_heading)
         self.db.replace_vectordb_heading_with_text(old_heading=old_heading,new_heading_text=new_heading,course_id=self.COURSE_ID,superdoc_id=self.DOCUMENT_ID)
+
+    def create_document(self,name:str,course_id): 
+        return self.docs_editor.create_google_doc(name=name,courseid=course_id)
 
     def get_docids(self,course_id:str): 
         return self.docs_editor.get_docids(courseid=course_id)
