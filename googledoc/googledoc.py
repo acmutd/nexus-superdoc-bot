@@ -16,36 +16,17 @@ from langchain_core.documents import Document
 
 from pdf_pipeline.parse import EmbedTreeNode, GdocTreeNode, pdf_to_syntree
 from io import BytesIO
+
+from dynamodb.dynamodb import append_to_course_docs, fetch_all_course_docs
 # If modifying these SCOPES, delete the file token.json.
 SCOPES = ["https://www.googleapis.com/auth/documents","https://www.googleapis.com/auth/drive.file"] # Use full scope like 'https://www.googleapis.com/auth/documents' for write operations
-'''
+
 class GoogleDocsAPI:
     def __init__(self, credentials_file='credentials.json', token_file='token.json'):
         self.credentials_file = credentials_file
         self.token_file = token_file
         (self.doc_service,self.drive_service) = self.authenticate()
         #self.doc = None
-    
-    def authenticate(self):
-        creds = None
-        # The token.json stores the user's access and refresh tokens
-        if os.path.exists(self.token_file):
-            creds = Credentials.from_authorized_user_file(self.token_file, SCOPES)
-            
-        # If there are no (valid) credentials available, let the user log in.
-        if not creds or not creds.valid:
-            if creds and creds.expired and creds.refresh_token:
-                creds.refresh(Request())
-            else:
-                flow = InstalledAppFlow.from_client_secrets_file(
-                    self.credentials_file, SCOPES)
-                # This will open a browser window for you to sign in
-                creds = flow.run_local_server(port=0)
-                
-            # Save the credentials for the next run
-            with open(self.token_file, 'w') as token:
-                token.write(creds.to_json())
-        return (build('docs', 'v1', credentials=creds),build('drive', 'v3', credentials=creds))
     
     def authenticate(self):
         """Authenticate and build the Google Docs service"""
@@ -65,7 +46,7 @@ class GoogleDocsAPI:
                 # See: https://developers.google.com/docs/api/quickstart/python
                 flow = InstalledAppFlow.from_client_secrets_file(
                     self.credentials_file, 
-                    ['https://www.googleapis.com/auth/documents']
+                    scopes=SCOPES
                 )
                 creds = flow.run_local_server(port=0)
             
@@ -73,18 +54,9 @@ class GoogleDocsAPI:
             with open(self.token_file, 'w') as token:
                 token.write(creds.to_json())
         
-        return build('docs', 'v1', credentials=creds)
-        try:
-            #print(f"OS:{os.getenv("GOOGLE_SERVICE_ACCT")}")
-            creds = service_account.Credentials.from_service_account_file(
-                os.getenv("GOOGLE_SERVICE_ACCT"), 
-                scopes=SCOPES
-            )
-            return (build('docs', 'v1', credentials=creds),build('drive', 'v3', credentials=creds))
-        except Exception as e:
-            print(f"Error authenticating with service account: {e}")
-            raise
-        '''
+        return (build('docs', 'v1', credentials=creds),build('drive', 'v3', credentials=creds))
+        
+'''
 class GoogleDocsAPI:
     def __init__(self, credentials_file='service-account-key.json'):
         # In Docker, make sure this path matches where you COPY the file
@@ -104,37 +76,12 @@ class GoogleDocsAPI:
             build('docs', 'v1', credentials=creds),
             build('drive', 'v3', credentials=creds)
         )
-
-
-
-
-class IDSError(Exception): 
-        def __init__(self,msg:str):
-            self.msg = msg
-class DocumentIDStore(): 
-    
-    def __init__(self):
-        self.cache = Index("idstore")
-    
-    def push_new_docId(self,courseid:str,docname:str,docid:str):
-        temp_dict = {}
-        if courseid in self.cache: 
-            temp_dict = self.cache[courseid]
-        if docname in temp_dict: 
-            raise IDSError("document name taken")
-        temp_dict[docname] = docid
-        self.cache[courseid] = temp_dict
-        
-    def get_docids(self,courseid:str): 
-        if courseid in self.cache:
-            return self.cache[courseid]
-        return None 
+'''
     
     
 class GoogleDocsEditor(GoogleDocsAPI):
     def __init__(self):
         super().__init__()
-        self.idstore = DocumentIDStore()
         
     def get_text_in_range_from_doc_obj(self,heading:str):
         """Helper to extract text from a doc object already in memory."""
@@ -162,13 +109,15 @@ class GoogleDocsEditor(GoogleDocsAPI):
                                 if rel_start < rel_end:
                                     extracted.append(text[rel_start:rel_end])
         return "".join(extracted)
+
+
     def create_google_doc(self, name:str, courseid:str):
         try:
             # Create the document using the Docs API
             #print(f"Service Account Email: {self.doc_service._http.credentials.service_account_email}")
             response = self.doc_service.documents().create(body={'title': name}).execute()
             document_id = response.get('documentId')
-            self.idstore.push_new_docId(courseid=courseid,docname=name,docid=document_id)
+            append_to_course_docs(courseId=courseid,new_doc_ids=[document_id])#self.idstore.push_new_docId(courseid=courseid,docname=name,docid=document_id)
             print(f'Created Document ID: {document_id}')
 
             # Set the document to be editable by anyone with the link
@@ -189,8 +138,8 @@ class GoogleDocsEditor(GoogleDocsAPI):
             print(f'Error creating document: {err}')
             return None
     
-    def get_idstore_docids(self,courseid:str): 
-        return self.idstore.get_docids(courseid=courseid)
+    def get_docids(self,courseid:str): 
+        return fetch_all_course_docs(courseId=courseid)
       
     def get_document_structure(self, document_id):
         """Fetch the current document state"""
@@ -775,20 +724,8 @@ def main():
     #self.create_google_doc(name="trees",courseid="prof-1302")
     #print(f"Doc Content{self.get_text_in_range_from_doc_obj(heading="Thylakoid Membranes Maximize Light Absorption")}")
    # test_render_to_gdoc()
-    self = GoogleDocsEditor()
-    self.get_document_structure(document_id="1zjQClSEUE587kPrupY5fplFtUcB3OGEj5mKhplmiFxM")
-    
-    text = '\t\tlist item'
-    text_len = self.text_utf16_len(text)
-    index=1
-    requests = [
-            {'insertText': {'location': {'index': index}, 'text': text}},
-            {'createParagraphBullets': {
-                'range': {'startIndex': index, 'endIndex': index + text_len},
-                'bulletPreset': 'BULLET_DISC_CIRCLE_SQUARE'
-            }}
-     ]
-    self.batch_update(requests)
+    docs_editor = GoogleDocsEditor() 
+    docs_editor.create_google_doc(name="lambda-test-create",courseid="prof-1302")
 
 if __name__ == "__main__":
     main()

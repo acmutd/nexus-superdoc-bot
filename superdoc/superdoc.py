@@ -140,7 +140,7 @@ class superdoc():
         self.db.replace_vectordb_heading_with_text(old_heading=old_heading,new_heading_text=new_heading,course_id=self.COURSE_ID,superdoc_id=self.DOCUMENT_ID)
 
     def get_docids(self,course_id:str): 
-        return self.docs_editor.get_idstore_docids(courseid=course_id)
+        return self.docs_editor.get_docids(courseid=course_id)
             
         
         

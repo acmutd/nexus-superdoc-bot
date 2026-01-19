@@ -35,6 +35,7 @@ docker run -it --rm \
   -v ~/.aws-lambda-rie/aws-lambda-rie:/usr/bin/aws-lambda-rie \
   -v $(pwd)/service-account-key.json:/app/service-account-key.json \
   -v $(pwd)/.env:/app/.env \
+  -v ~/.aws:/root/.aws:ro \
   -p 8080:8080 \
   --entrypoint /usr/bin/aws-lambda-rie \
   superdoc \
