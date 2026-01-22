@@ -459,7 +459,7 @@ class GdocTreeNode():
         #return wrapper object
         return curr
    
-    def generate_custom_branch_requests(self, startIndex: int, level: int = 0): 
+    def generate_custom_branch_requests(self, startIndex: int, endIndex:int ,level: int = 0): 
         if not self.is_custom_node: 
             return None, None, None
         all_text_requests = []
@@ -586,7 +586,7 @@ class GdocTreeNode():
             return [],[],0#self._build_native_table_requests(raw_content, index, level)
         # 2. Apply level-based indentation with tabs and add newline
         tab_prefix = "\t" * level
-        final_text = f"{tab_prefix}{raw_content}\n"
+        final_text = f"{tab_prefix}{raw_content}"
 
         # Calculate length (Google Docs uses UTF-16)
         text_len = len(final_text.encode("utf-16-le")) // 2
@@ -595,7 +595,7 @@ class GdocTreeNode():
         text_requests = [{
             'insertText': {
                 'location': {'index': index},
-                'text': final_text
+                'text': final_text+"\n"
             }
         }]
 
@@ -611,6 +611,13 @@ class GdocTreeNode():
         else:
             # Standard paragraph styling (spacing, etc.)
             format_requests.append({
+                'createParagraphBullets': {
+                    'range': {'startIndex': index, 'endIndex': index + text_len},
+                    'bulletPreset': 'BULLET_DISC_CIRCLE_SQUARE'
+                }
+            })
+            '''
+            format_requests.append({
                 'updateParagraphStyle': {
                     'range': {'startIndex': index, 'endIndex': index + text_len},
                     'paragraphStyle': {
@@ -619,7 +626,7 @@ class GdocTreeNode():
                     },
                     'fields': 'lineSpacing,spaceAbove'
                 }
-            })
+            }) '''
 
         return text_requests, format_requests, text_len
 
@@ -631,7 +638,7 @@ class GdocTreeNode():
         pieces = []
 
         # Only pull content if it is explicitly a TEXT node or a leaf with content
-        if node.node.type == "text" and node.content:
+        if node.type == "text" and node.content: #node.node.type == "text" and node.content
             pieces.append(node.content.strip())
 
         # Recurse into children (STONG, EM, etc. will eventually lead to TEXT nodes)

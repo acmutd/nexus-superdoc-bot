@@ -147,6 +147,7 @@ class GoogleDocsEditor(GoogleDocsAPI):
             ##print("CALLED DOCUMENT STRUCTURE")
             self.document_id = document_id
             self.doc = self.doc_service.documents().get(documentId=document_id).execute()
+            return self.doc
            # print(f"CALLED DOCUMETN STRUCTURE:{self.doc}")
         except Exception as e:
             print(f"Error fetching document: {e}")
@@ -354,6 +355,7 @@ class GoogleDocsEditor(GoogleDocsAPI):
 
     #Before modifying the google doc, we run a quick check on all of the 
     def mutate_named_ranges(self,document_id:str):
+        #self.get_document_structure(document_id=document_id)
         document = self.doc
         named_ranges = document.get("namedRanges",{})
         sorted_items = sorted(named_ranges.items(),key=lambda item: item[1].get("namedRanges", [{}])[0]
@@ -431,28 +433,36 @@ class GoogleDocsEditor(GoogleDocsAPI):
             startIndex = range['namedRanges'][0]['ranges'][0]['startIndex']
             endIndex = range['namedRanges'][0]['ranges'][0]['endIndex']
             print(f"\nGDOC BRANCH: {branch}\n\n")
-            (branch_text_requests, branch_format_requests, _) = branch.generate_custom_branch_requests(startIndex)
+            (branch_text_requests, branch_format_requests, _) = branch.generate_custom_branch_requests(startIndex=startIndex,endIndex=endIndex)
             text_requests.append(branch_text_requests)
-            format_requests.extend(branch_format_requests)
+            format_requests.append(branch_format_requests)
 
         #sorting custon_node delimited branches in reverse order so that the branches get appened right
         #print(text_requests)
         text_requests = [req for req in text_requests if len(req)!=0]
-        text_requests = sorted(text_requests,
-                    key=lambda x: x[0].get("insertText",{})
+        text_and_format_requests = sorted(zip(text_requests,format_requests),
+                    key=lambda x: x[0][0].get("insertText",{})
                                     .get("location",{})
                                     .get("index",0),
                                reverse=True)   
         #print(format)
         batch_text_request = [] 
-        for branch_req in text_requests:
+        batch_format_request = []
+        batch_all_requests = []
+        for branch_req,format_req in text_and_format_requests:
             print("Branch HIT") 
-            batch_text_request.extend(branch_req)
+            #batch_text_request.extend(branch_req)
+            #batch_format_request.extend(format_req)
+            #self.batch_update(branch_req)
+            #self.batch_update(format_req)
+            batch_all_requests.extend(branch_req)
+            batch_all_requests.extend(format_req)
             #self.batch_update(branch_req)
             pass
-        
-        self.batch_update(batch_text_request) 
-        #self.batch_update(format_requests)
+        print(f"Len of format requests:{len(batch_format_request)}")
+        #self.batch_update(batch_text_request) 
+        #self.batch_update(batch_format_request)
+        self.batch_update(batch_all_requests)
         print(f"FINISHED BATCH UPDATE")
 
 

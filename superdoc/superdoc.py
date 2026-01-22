@@ -89,7 +89,8 @@ class superdoc():
         # This uses the specialized hierarchical renderer
         print(f"Rendering {len(all_cust_nodes)} custom branches to Google Doc...")
         render_start = time.perf_counter()
-        
+        self.docs_editor.get_document_structure(document_id=self.DOCUMENT_ID)
+        self.docs_editor.mutate_named_ranges(document_id=self.DOCUMENT_ID)
         # This method handles named ranges and structural formatting
         self.docs_editor.render_etree_custom_nodes(
             superdoc_id=self.DOCUMENT_ID, 
@@ -142,8 +143,26 @@ class superdoc():
     def create_document(self,name:str,course_id): 
         return self.docs_editor.create_google_doc(name=name,courseid=course_id)
 
-    def get_docids(self,course_id:str): 
-        return self.docs_editor.get_docids(courseid=course_id)
+    def get_docids(self, course_id: str) -> dict: 
+        # 1. Get the list of document IDs (assuming this returns a list)
+        document_ids = self.docs_editor.get_docids(courseid=course_id)
+        
+        # 2. Initialize the dictionary
+        docs_map = {}
+        
+        for docid in document_ids:
+            # 3. Get the document structure/metadata
+            # Usually, the title/name is found in the 'title' field of the doc object
+            doc_structure = self.docs_editor.get_document_structure(docid)
+            
+            # Extract the name (adjust key based on your get_document_structure return type)
+            doc_name = doc_structure.get('title', 'Untitled Document')
+            
+            # 4. Map the Name to the ID
+            docs_map[doc_name] = docid
+            
+        return docs_map
+            
             
         
         
@@ -178,8 +197,12 @@ def insert_text_ex():
     
     
 if __name__ == '__main__': 
-    sd = superdoc(DOCUMENT_ID='1zjQClSEUE587kPrupY5fplFtUcB3OGEj5mKhplmiFxM',COURSE_ID="RHET1302")
+    with open("files/Chloroplast 2.pdf", "rb") as f:
+        pdf_bytes = f.read()
+    strm = BytesIO(pdf_bytes)
+
+    sd = superdoc(DOCUMENT_ID='1t3s5LwhA2wh8weSWgor2vkToSkYDNBiPt1rNaPfX44g',COURSE_ID="RHET1302")
+    sd.merge_pdf_hierarchical(stream=strm)
     #sd.merge_pdf()
    # sd.update_heading(old_heading="Introduction",new_heading="GoofyGoober")
     #sd.create_heading(new_heading="Trump giving Kirk to Bubba")
-    sd.delete_heading(old_heading="Trump giving Kirk to Bubba")

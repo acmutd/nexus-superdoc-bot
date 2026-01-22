@@ -26,9 +26,12 @@ docker run -it --rm \
   -p 8080:8080 \
   superdoc
 
-5. Test the Function
+(because it uses a specific run time environment to test out the code in the lambda function, it requires an ugly postman request)
+so, instead of testing on the container, we can just test simply using uvicorn
 
-Once the container is running, run uvicorn lambda_function:app --port 8000 in another terminal 
 
-Now you can test the container as how it would in a lambda locally!
-just for ex, so try out http://127.0.0.1:8000/health in postman as well as the other endpoints
+
+run: uvicorn lambda_function:app --port 8000  
+
+\
+for ex, u can use the endpoints like they normally would be used and send normal body requests http://127.0.0.1:8000/health 

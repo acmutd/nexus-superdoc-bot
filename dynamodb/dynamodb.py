@@ -30,7 +30,10 @@ def save_course_docs(courseId, doc_ids):
         return False
 
 def append_to_course_docs(courseId, new_doc_ids):
-    """Adds new document IDs to an existing list without deleting old ones."""
+    """Adds new document IDs to an existing list. Creates item if missing."""
+    if not isinstance(new_doc_ids, list):
+        new_doc_ids = [new_doc_ids] # Ensure it's a list for list_append
+
     try:
         table.update_item(
             Key={'courseId': courseId},
