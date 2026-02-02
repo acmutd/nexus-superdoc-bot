@@ -1,5 +1,5 @@
 # Use the official AWS Lambda Python 3.13 base image
-FROM public.ecr.aws/lambda/python:3.13
+FROM --platform=linux/amd64 public.ecr.aws/lambda/python:3.13
 ENV PIP_ROOT_USER_ACTION=ignore
 
 # The working directory in AWS base images is /var/task by default
