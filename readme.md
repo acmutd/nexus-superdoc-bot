@@ -23,15 +23,5 @@ Bash
 docker run -it --rm \
   -v $(pwd)/.env:${LAMBDA_TASK_ROOT}/.env \
   -v ~/.aws:/root/.aws:ro \
-  -p 8080:8080 \
+  -p 8000:8000 \
   superdoc
-
-(because it uses a specific run time environment to test out the code in the lambda function, it requires an ugly postman request)
-so, instead of testing on the container, we can just test simply using uvicorn
-
-
-
-run: uvicorn lambda_function:app --port 8000  
-
-\
-for ex, u can use the endpoints like they normally would be used and send normal body requests http://127.0.0.1:8000/health 
