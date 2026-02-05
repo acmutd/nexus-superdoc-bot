@@ -259,7 +259,7 @@ vine==5.1.0
 warlock==2.1.0
 wcwidth==0.2.14
 WebOb==1.8.9
-Werkzeug==3.1.4
+Werkzeug==3.1.5
 wrapt==2.0.1
 WSME==0.12.1
 xlsxwriter==3.2.5
