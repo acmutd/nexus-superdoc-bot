@@ -427,18 +427,36 @@ class GoogleDocsEditor(GoogleDocsAPI):
 
         text_requests = []
         format_requests = []
+        range_dict = {}
         for branch, range in zip(gdoc_branches, ranges): 
             #print(f"Heading range{range}")
-
+            heading = branch.content
             #print(branch)
-
+            
             #Need to make a new cache system that keeps track of the new named range indices after we add a branch under a heading
-            startIndex = range['namedRanges'][0]['ranges'][0]['startIndex']
-            endIndex = range['namedRanges'][0]['ranges'][0]['endIndex']
+
+            if heading in range_dict: 
+                # Use previously calculated indices if we've already touched this heading
+                startIndex = range_dict[heading]['startIndex']
+                endIndex = range_dict[heading]['endIndex'] + 1
+                code = 0
+            else:
+                # Look up the heading's location in the freshly updated doc
+                startIndex = range['namedRanges'][0]['ranges'][0]['startIndex']
+                endIndex = range['namedRanges'][0]['ranges'][0]['endIndex']
+
+
+            #startIndex = range['namedRanges'][0]['ranges'][0]['startIndex']
+            #endIndex = range['namedRanges'][0]['ranges'][0]['endIndex']
             print(f"\nGDOC BRANCH: {branch}\n\n")
-            (branch_text_requests, branch_format_requests, _) = branch.generate_custom_branch_requests(startIndex=startIndex,endIndex=endIndex)
+            (branch_text_requests, branch_format_requests, text_len) = branch.generate_formatted_requests(start_index=endIndex)#branch.generate_custom_branch_requests(startIndex=startIndex,endIndex=endIndex)
             text_requests.append(branch_text_requests)
             format_requests.append(branch_format_requests)
+
+            range_dict[heading] ={
+                    'startIndex' : startIndex, 
+                    'endIndex' : endIndex + text_len
+                }
 
 
         #Need to make a final set named range fixer here:
@@ -465,7 +483,27 @@ class GoogleDocsEditor(GoogleDocsAPI):
             batch_all_requests.extend(format_req)
             #self.batch_update(branch_req)
             pass
+
+        for heading in range_dict: 
+            startIndex = range_dict[heading]['startIndex']
+            endIndex = range_dict[heading]['endIndex']
+
+            # Final formatting: Clear existing bullets and re-apply to the whole range
+            range_dict[heading] = [
+                {'deleteNamedRange': {'name': heading}},                  
+                {
+                    'createNamedRange': {
+                        'name': heading,
+                        'range': {
+                            'startIndex': startIndex,
+                            'endIndex': endIndex
+                        }
+                    }   
+                }
+            ]    
+
         print(f"Len of format requests:{len(batch_format_request)}")
+        batch_format_request.extend(list(chain(*range_dict.values())))
         #self.batch_update(batch_text_request) 
         #self.batch_update(batch_format_request)
         self.batch_update(batch_all_requests)
