@@ -424,12 +424,15 @@ class GoogleDocsEditor(GoogleDocsAPI):
             print(f"Branch {i} ({all_cust_nodes[i].content}): {len(branch.children)} children")
     
 
+
         text_requests = []
         format_requests = []
         for branch, range in zip(gdoc_branches, ranges): 
             #print(f"Heading range{range}")
 
             #print(branch)
+
+            #Need to make a new cache system that keeps track of the new named range indices after we add a branch under a heading
             startIndex = range['namedRanges'][0]['ranges'][0]['startIndex']
             endIndex = range['namedRanges'][0]['ranges'][0]['endIndex']
             print(f"\nGDOC BRANCH: {branch}\n\n")
@@ -437,7 +440,10 @@ class GoogleDocsEditor(GoogleDocsAPI):
             text_requests.append(branch_text_requests)
             format_requests.append(branch_format_requests)
 
-        #sorting custon_node delimited branches in reverse order so that the branches get appened right
+
+        #Need to make a final set named range fixer here:
+
+        #sorting custom_node delimited branches in reverse order so that the branches get appened right
         #print(text_requests)
         text_requests = [req for req in text_requests if len(req)!=0]
         text_and_format_requests = sorted(zip(text_requests,format_requests),

@@ -47,6 +47,11 @@ class superdoc():
         self.docs_editor.get_document_structure(document_id=self.DOCUMENT_ID)
         self.emb_model =OpenAIEmbeddings(api_key=os.getenv("OPENAI_API_KEY")) 
     
+
+    
+        
+
+
     def merge_pdf_hierarchical(self, stream: BytesIO):
         """
         New tree-based merge functionality that respects document hierarchy 

@@ -459,6 +459,7 @@ class GdocTreeNode():
         #return wrapper object
         return curr
    
+    '''
     def generate_custom_branch_requests(self, startIndex: int, endIndex:int ,level: int = 0): 
         if not self.is_custom_node: 
             return None, None, None
@@ -497,7 +498,8 @@ class GdocTreeNode():
             all_format_requests.extend(self.format_requests)
 
         return all_text_requests, all_format_requests, total_offset
-    
+    '''
+
     def _dispatch_node_type(self, index: int, level: int, context: dict = None) -> tuple[list[dict], list[dict], int]:
         node_type = self.node.type
         context = context or {}
@@ -505,8 +507,32 @@ class GdocTreeNode():
         if node_type == "paragraph":
             # Paragraph is now the leaf renderer
             return self._format_paragraph_as_leaf(index, level, context)
+        elif self.is_custom_node:
+            header_text = f"{self.content}:\n\n"
+            u16_len = text_utf16_len(header_text)
 
-        elif not self.is_custom_node and node_type == "heading":
+            text_request = {
+                'insertText': {
+                    'text': header_text,
+                    'location': {'index': index}
+                }
+            }
+
+            # Make the custom header bold
+            format_request = {
+                'updateTextStyle': {
+                    'textStyle': {'bold': True},
+                    'range': {
+                        'startIndex': index,
+                        'endIndex': index + u16_len
+                    },
+                    'fields': 'bold'
+                }
+            }
+
+            return [text_request], [format_request], u16_len    
+
+        elif node_type == "heading":
             return self._format_heading(index, level)
 
         elif node_type in ["bullet_list", "ordered_list"]:
