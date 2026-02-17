@@ -599,6 +599,61 @@ class GdocTreeNode():
         }]
         return text_requests, format_requests, text_len
 
+    def _format_paragraph_as_leaf(self, index: int, level: int, context: dict) -> tuple[list[dict], list[dict], int]:
+        # 1. Clean the content - strip to prevent double-spacing
+        raw_content = self._extract_clean_text(self).strip()
+        if not raw_content:
+            return [], [], 0
+    
+        final_text = f"{raw_content}\n"
+        # Calculate length using UTF-16 (Google Docs requirement)
+        text_len = len(final_text.encode("utf-16-le")) // 2
+        
+        text_requests = [{
+            'insertText': {
+                'location': {'index': index},
+                'text': final_text
+            }
+        }]
+    
+        format_requests = []
+        is_list = context.get("list_mode") is not None
+    
+        # 2. Define Indentation Math (Standard: 18pt or 36pt per level)
+        # bullet_offset: Where the bullet or the first character sits
+        # text_offset: Where the actual block of text aligns
+        bullet_offset = level * 36
+        text_offset = (level + 1) * 36
+    
+        if is_list:
+            # Create the Bullet
+            format_requests.append({
+                'createParagraphBullets': {
+                    'range': {'startIndex': index, 'endIndex': index + text_len},
+                    'bulletPreset': 'BULLET_DISC_CIRCLE_SQUARE' if context["list_mode"] == "BULLET" else 'NUMBERED_DECIMAL_ALPHA_ROMAN'
+                }
+            })
+        else:
+            # For standard text, we want the first line and the rest of the block 
+            # to start at the same indented position (unlike a bullet)
+            bullet_offset = text_offset 
+    
+        # 3. Apply the Paragraph Style (The "Alignment Fix")
+        format_requests.append({
+            'updateParagraphStyle': {
+                'paragraphStyle': {
+                    'indentFirstLine': {'magnitude': bullet_offset, 'unit': 'PT'},
+                    'indentStart': {'magnitude': text_offset, 'unit': 'PT'},
+                    'namedStyleType': 'NORMAL_TEXT'
+                },
+                'range': {'startIndex': index, 'endIndex': index + text_len},
+                'fields': 'indentFirstLine,indentStart,namedStyleType'
+            }
+        })
+    
+        return text_requests, format_requests, text_len
+
+    '''
 
     def _format_paragraph_as_leaf(self, index: int, level: int, context: dict) -> tuple[list[dict], list[dict], int]:
         """
@@ -642,7 +697,6 @@ class GdocTreeNode():
                     'bulletPreset': 'BULLET_DISC_CIRCLE_SQUARE'
                 }
             })
-            '''
             format_requests.append({
                 'updateParagraphStyle': {
                     'range': {'startIndex': index, 'endIndex': index + text_len},
@@ -652,9 +706,13 @@ class GdocTreeNode():
                     },
                     'fields': 'lineSpacing,spaceAbove'
                 }
-            }) '''
+            }) 
 
         return text_requests, format_requests, text_len
+
+    '''
+
+
 
     def _extract_clean_text(self, node) -> str:
         """
