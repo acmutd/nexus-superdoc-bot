@@ -17,6 +17,8 @@ from langchain_core.documents import Document
 from pdf_pipeline.parse import EmbedTreeNode, GdocTreeNode, pdf_to_syntree
 from io import BytesIO
 
+from collections import defaultdict
+
 from dynamodb.dynamodb import append_to_course_docs, fetch_all_course_docs
 # If modifying these SCOPES, delete the file token.json.
 SCOPES = ["https://www.googleapis.com/auth/documents","https://www.googleapis.com/auth/drive.file"] # Use full scope like 'https://www.googleapis.com/auth/documents' for write operations
@@ -37,6 +39,7 @@ class GoogleDocsAPI:
         if os.path.exists(self.token_file):
             creds = Credentials.from_authorized_user_file(self.token_file)
         
+        print(creds.valid)
         # If there are no (valid) credentials available, let the user log in.
         if not creds or not creds.valid:
             if creds and creds.expired and creds.refresh_token:
@@ -408,7 +411,7 @@ class GoogleDocsEditor(GoogleDocsAPI):
         self.create_headings(headings)
         self.get_document_structure(document_id=superdoc_id)
         ranges = [self.find_named_range(heading) for heading in headings] 
-
+        print(f"Ranges: {ranges}")
         # Before converting to Gdoc
         for i, node in enumerate(all_cust_nodes):
             print(f"ETREE Node {i} type: {node.type}, children count: {len(node.children)}")
@@ -425,20 +428,20 @@ class GoogleDocsEditor(GoogleDocsAPI):
     
 
 
+
         text_requests = []
         format_requests = []
         range_dict = {}
+        req_per_heading = defaultdict(list)
         for branch, range in zip(gdoc_branches, ranges): 
             #print(f"Heading range{range}")
             heading = branch.content
             #print(branch)
             
-            #Need to make a new cache system that keeps track of the new named range indices after we add a branch under a heading
-
             if heading in range_dict: 
                 # Use previously calculated indices if we've already touched this heading
                 startIndex = range_dict[heading]['startIndex']
-                endIndex = range_dict[heading]['endIndex'] + 1
+                endIndex = range_dict[heading]['endIndex'] -1
                 code = 0
             else:
                 # Look up the heading's location in the freshly updated doc
@@ -450,6 +453,8 @@ class GoogleDocsEditor(GoogleDocsAPI):
             #endIndex = range['namedRanges'][0]['ranges'][0]['endIndex']
             print(f"\nGDOC BRANCH: {branch}\n\n")
             (branch_text_requests, branch_format_requests, text_len) = branch.generate_formatted_requests(start_index=endIndex)#branch.generate_custom_branch_requests(startIndex=startIndex,endIndex=endIndex)
+            req_per_heading[heading].append(branch_text_requests)
+            req_per_heading[heading].append(branch_format_requests)
             text_requests.append(branch_text_requests)
             format_requests.append(branch_format_requests)
 
@@ -464,32 +469,19 @@ class GoogleDocsEditor(GoogleDocsAPI):
         #sorting custom_node delimited branches in reverse order so that the branches get appened right
         #print(text_requests)
         text_requests = [req for req in text_requests if len(req)!=0]
-        text_and_format_requests = sorted(zip(text_requests,format_requests),
-                    key=lambda x: x[0][0].get("insertText",{})
-                                    .get("location",{})
-                                    .get("index",0),
-                               reverse=True)   
-        #print(format)
-        batch_text_request = [] 
-        batch_format_request = []
-        batch_all_requests = []
-        for branch_req,format_req in text_and_format_requests:
-            print("Branch HIT") 
-            #batch_text_request.extend(branch_req)
-            #batch_format_request.extend(format_req)
-            #self.batch_update(branch_req)
-            #self.batch_update(format_req)
-            batch_all_requests.extend(branch_req)
-            batch_all_requests.extend(format_req)
-            #self.batch_update(branch_req)
-            pass
 
-        for heading in range_dict: 
+        sorted_heading_ranges = sorted(range_dict.items(), 
+                    key= lambda x: x[1]['startIndex'],
+                                reverse=True)
+        print(f"Sorted heading ranges: {sorted_heading_ranges}")
+        text_and_format_requests = []
+        for (heading,heading_range) in sorted_heading_ranges:
             startIndex = range_dict[heading]['startIndex']
             endIndex = range_dict[heading]['endIndex']
 
-            # Final formatting: Clear existing bullets and re-apply to the whole range
-            range_dict[heading] = [
+            for requests in req_per_heading[heading]:
+                text_and_format_requests.extend(requests)
+            text_and_format_requests.extend([
                 {'deleteNamedRange': {'name': heading}},                  
                 {
                     'createNamedRange': {
@@ -500,12 +492,12 @@ class GoogleDocsEditor(GoogleDocsAPI):
                         }
                     }   
                 }
-            ]    
-
-        print(f"Len of format requests:{len(batch_format_request)}")
-        batch_format_request.extend(list(chain(*range_dict.values())))
-        #self.batch_update(batch_text_request) 
-        #self.batch_update(batch_format_request)
+            ])
+       
+     
+        batch_all_requests = text_and_format_requests
+        print(f"Len of all requests:{len(batch_all_requests)}")
+      
         self.batch_update(batch_all_requests)
         print(f"FINISHED BATCH UPDATE")
 
@@ -778,8 +770,6 @@ def main():
     #self.create_google_doc(name="trees",courseid="prof-1302")
     #print(f"Doc Content{self.get_text_in_range_from_doc_obj(heading="Thylakoid Membranes Maximize Light Absorption")}")
    # test_render_to_gdoc()
-    docs_editor = GoogleDocsEditor() 
-    docs_editor.create_google_doc(name="lambda-test-create",courseid="prof-1302")
-
+    pass
 if __name__ == "__main__":
     main()

@@ -206,7 +206,7 @@ if __name__ == '__main__':
         pdf_bytes = f.read()
     strm = BytesIO(pdf_bytes)
 
-    sd = superdoc(DOCUMENT_ID='1t3s5LwhA2wh8weSWgor2vkToSkYDNBiPt1rNaPfX44g',COURSE_ID="RHET1302")
+    sd = superdoc(DOCUMENT_ID='13OiEdtje4wMZGT1LEfVmj3RmAeR1BchUF6eZBaICH8w',COURSE_ID="RHET1302")
     sd.merge_pdf_hierarchical(stream=strm)
     #sd.merge_pdf()
    # sd.update_heading(old_heading="Introduction",new_heading="GoofyGoober")
