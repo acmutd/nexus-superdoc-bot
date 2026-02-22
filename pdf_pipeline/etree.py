@@ -265,7 +265,7 @@ class EmbedTreeNode():
         for node in custom_nodes: 
             curr = node 
             while curr: 
-                curr.custom_node_present = True 
+                curr.has_custom_node = True 
                 curr = curr.parent
 
         #Find straggler branches 
@@ -458,7 +458,7 @@ def get_sampled_text(nodes: list[EmbedTreeNode]) -> str:
 
 
 
-    
+
 def generate_headings_from_sentences(sentences: list[str]) -> list[str]:
     """
     Generate clean, short headings for a list of sentences using batching.
