@@ -31,6 +31,7 @@ class EmbedTreeNode():
         self.parent = parent
         self.children:list[EmbedTreeNode] = []
         
+        self.has_embedding = False
         self.content = getattr(self.node,'content',"") or ""
         self.block_len = len(self.content.split(" "))  #0 if (self.node.type=="root") else len(self.node.content)
         self.is_custom_node = is_custom
@@ -123,6 +124,7 @@ class EmbedTreeNode():
 
     @classmethod     
     def _embed_tree_(cls,node): 
+        '''
         etree:cls = node
         all_content = etree.apply(lambda enode: enode.node.content)
         print(f"List of all content being embedded")
@@ -131,6 +133,18 @@ class EmbedTreeNode():
         for enode,vector in zip(all_enodes,tree_vectors): 
             enode.emb = vector
             enode.mean_emb = enode.emb
+        '''
+        etree:cls = node 
+        nodes = etree.apply(lambda enode: enode)
+        heading_nodes = list(filter(lambda enode: endoe.type == 'heading', nodes))
+        heading_nodes_content = [h_node.content for h_node in heading_nodes]
+        heading_node_vectors = etree.emb_model.embed_documents(list(heading_nodes_content))
+        for h_node,h_vector in zip(heading_nodes,heading_node_vectors):
+            h_node.has_embedding = True 
+            h_node.embedding = h_vector
+            
+
+            
    
     @classmethod
     def _insert_custom_before(cls,node,custom_node): 
