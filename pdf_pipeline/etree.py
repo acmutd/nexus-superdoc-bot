@@ -141,7 +141,8 @@ class EmbedTreeNode():
         heading_node_vectors = etree.emb_model.embed_documents(list(heading_nodes_content))
         for h_node,h_vector in zip(heading_nodes,heading_node_vectors):
             h_node.has_embedding = True 
-            h_node.embedding = h_vector
+            h_node.emb = h_vector
+            h_node.mean_emb = h_vector
             
 
             
@@ -219,6 +220,8 @@ class EmbedTreeNode():
                 return
             if node.block_len<MIN_BLOCK_LEN:
                 return
+            if not node.has_embedding: 
+                return
             most_similar_idx,similarity = find_closest_cosine_sim(node.mean_emb,heading_vecs)
             if similarity<SIMILARITY_THRESHOLD:
                 return
@@ -281,27 +284,7 @@ class EmbedTreeNode():
             while curr: 
                 curr.has_custom_node = True 
                 curr = curr.parent
-
-        #Find straggler branches 
-        def find_straggle_branches(node) -> Generator[Any, None, None]:
-            if node.block_len < MIN_BLOCK_LEN:
-                return 
-
-            # CRITICAL: If this node is a custom heading, STOP recursing. 
-            # Do not look for stragglers inside a branch we already defined.
-            if getattr(node, 'is_custom_node', False):
-                return
-
-            # If it's the root or has a custom node somewhere in its subtree, 
-            # we look at its children.
-            if node.node.type == "root" or getattr(node, 'has_custom_node', False): 
-                for child in node.children:
-                    yield from find_straggle_branches(child)
-            else:
-                # If it's not custom and not claimed, this is a straggler
-                if not getattr(node, 'claimed', False):
-                    yield node
-        '''        
+                
         def find_straggle_branches(node) -> Generator[list[EmbedTreeNode], None, None]:
             if node.block_len < MIN_BLOCK_LEN:
                 return 
@@ -332,8 +315,47 @@ class EmbedTreeNode():
             else:
                 # This whole branch is an orphan
                 yield [node]     
-        '''    
-        #Add or redefine straggler branches to be a custom node(set is_custom_node=True) 
+            
+
+        #Get straggler branches that come in as a list[list[EmbedTreeNode]], these lists of nodes represent branches that don't have a prent heading 
+        straggler_batches = [batch for batch in find_straggle_branches(self) if(batch)]
+        
+        #Get the filtered content of each batch(after assembling all the batch text get the first 30, the middle 30 and the last 30 characters)
+        straggler_batch_content = []
+        for batch in straggler_batches: 
+            batch_content = ''
+            for batch_node in batch: 
+                batch_content+=batch_node.get_full_text()
+            straggler_batch_content.append(batch_content)
+        #filtered batch content
+        straggler_batch_sampled_content = [get_sampled_text(content) for content in straggler_batch_content]
+        
+        #get the open_ai generated headings for the filtered content 
+        generated_headings = generate_headings_from_sentences(straggler_batch_sampled_content)
+
+        generated_nodes = []
+        for batch, heading in zip(straggler_batches,generated_headings): 
+            print("Heading generated") 
+            md = mdit.parse(f"#{heading}")
+            syntax_tree = SyntaxTreeNode(md)
+
+            # The parsed tree structure is: root -> heading
+            # So we need to get the first child (the actual heading node)
+            if syntax_tree.children and len(syntax_tree.children) > 0:
+                heading_node = syntax_tree.children[0]  # Get the actual heading, not root
+            else:
+                # Fallback: create a simple heading node manually
+                heading_node = syntax_tree
+
+            cus_node = EmbedTreeNode(heading_node, self.emb_model, parent=None, is_custom=True)
+            cus_node.content = heading
+            cus_node.is_custom_node = True 
+            cus_node.has_custom_node = True
+            generated_nodes.append(cus_node)
+            #node.claimed = True
+            
+            
+        '''
         straggler_branches = [node for node in find_straggle_branches(self) if(node)]#self.apply(lambda node: if (not node.is_custom_node and node.block_len>=MIN_BLOCK_LEN) node)    
         new_heading_needed:list[EmbedTreeNode] = []
         for branch in straggler_branches: 
@@ -372,6 +394,7 @@ class EmbedTreeNode():
             #all_final_custom_nodes.append(cus_node)
         all_final_custom_nodes.extend(generated_nodes)
         return (generated_nodes,all_final_custom_nodes)
+        '''
 
 
 
