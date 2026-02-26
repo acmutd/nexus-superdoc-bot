@@ -9,13 +9,17 @@ import pymupdf
 import numpy as np
 from langchain_openai import OpenAIEmbeddings,ChatOpenAI
 
-from typing import Callable, Any, Generator, Iterator, TypeVar
+from pydantic import BaseModel
+from typing import List, Callable, Any, Generator, Iterator, Self ,TypeVar
 from itertools import tee
+
+
 
 from dotenv import load_dotenv
 import os
 import time
 import traceback
+
 
 MIN_BLOCK_LEN = 10
 SIMILARITY_THRESHOLD=0.97
@@ -38,6 +42,11 @@ class EmbedTreeNode():
         self.has_custom_node = is_custom
         #self.claimed = False
 
+    def __hash__(self): 
+        return id(self)
+    
+    def __eq__(self,other): 
+        return self is other
 
     @classmethod
     def _init_tree(cls, root_node: SyntaxTreeNode, emb_model: OpenAIEmbeddings) -> 'EmbedTreeNode':
@@ -171,6 +180,17 @@ class EmbedTreeNode():
 
         custom_node.mean_emb = node.mean_emb
 
+    @classmethod 
+    def remove_branch(cls,node): 
+        if not node.parent or node.type=="root": 
+            return  
+        parent = node.parent
+        #1. Find where the node was is in the parent's list
+        idx = parent.children.index(node)
+        parent.children.remove(idx)
+
+
+
 
     @classmethod
     def get_full_text(cls, node) -> str:
@@ -196,16 +216,96 @@ class EmbedTreeNode():
      
     
 
+
     '''
-    Heading:
-        "id": match.id,
-        "heading": match.metadata.get("heading"),
-        "position": match.metadata.get("position"),
-        "embedding": match.values
 
-    headings:list[Heading]
-    '''     
+        insert_custom_heading helper functions
 
+    '''
+
+
+    def find_straggle_branches(node) -> Generator[list[EmbedTreeNode], None, None]:
+            if node.block_len < MIN_BLOCK_LEN:
+                return 
+
+            if getattr(node, 'is_custom_node', False):
+                return
+
+            # If this path has custom nodes, we must check children
+            if node.node.type == "root" or getattr(node, 'has_custom_node', False):
+                current_group = []
+
+                for child in node.children:
+                    # If child is a 'clean' branch (no custom nodes), collect it
+                    if not getattr(child, 'has_custom_node', False) and not getattr(child, 'is_custom_node', False):
+                        if child.block_len >= MIN_BLOCK_LEN:
+                            current_group.append(child)
+                    else:
+                        # We hit a 'custom' branch, so flush the current group first
+                        if current_group:
+                            yield current_group
+                            current_group = []
+                        # Then recurse into the branch that HAS custom nodes
+                        yield from find_straggle_branches(child)
+
+                # Flush any remaining group at the end of siblings
+                if current_group:
+                    yield current_group
+            else:
+                # This whole branch is an orphan
+                yield [node]     
+
+    class DB_Heading(BaseModel): 
+        id: str 
+        heading: Optional[str]
+        position: Optional[int]
+        embedding: List[float]
+         
+    def match_headings(self,db_headings:list[DB_Heading],pdf_heading_nodes) -> dict[Self,str]:
+        
+        heading_vecs = np.array([h.embedding for h in db_headings if len(h.embedding) == 1536])
+        
+        def check_node_against_headings(node)->tuple[str,Self]:
+            if heading_vecs.size==0: 
+                return
+            if node.type=="root":
+                return
+            if node.block_len<MIN_BLOCK_LEN:
+                return
+            if not node.has_embedding: 
+                return
+            most_similar_idx,similarity = find_closest_cosine_sim(node.mean_emb,heading_vecs)
+            if similarity<SIMILARITY_THRESHOLD:
+                return
+            return (db_headings[most_similar_idx].heading,node)
+
+        print(f"Fetched Headings len:{len(db_headings)}")
+        #heading_node_pairs:list[tuple[str,Self]] = list(self.apply(check_node_against_headings)) 
+        node_heading_pairs = {
+            node: heading 
+            for result in self.apply(check_node_against_headings)
+            if result is not None 
+            for heading, node in [result] # unpacking trick for a singular tuple within the comprehension
+        }
+        return node_heading_pairs
+
+
+    def remove_different_heading_child_branches(self,parent_heading:str,node_heading_pairs:dict[Self,str]):
+        if not parent_heading: 
+            parent_heading = node_heading_pairs.get(self)
+            if not parent_heading: 
+                raise Exception('Can remove different heading child branches from headingless node')
+        for child in list(self.children): #iterate over a copy of self.children, don't have to deal w/index shifts 
+            matched_heading = node_heading_pairs.get(child)
+            if matched_heading: 
+                if not (parent_heading == matched_heading): 
+                    type(self).remove_branch(child)
+                    continue
+                else: 
+                    child.is_custom_node = False
+            child.remove_different_heading_child_branches(parent_heading=parent_heading,node_heading_pairs=node_heading_pairs)
+
+    
 
     def insert_custom_headings(self,headings):
 
@@ -285,37 +385,7 @@ class EmbedTreeNode():
                 curr.has_custom_node = True 
                 curr = curr.parent
                 
-        def find_straggle_branches(node) -> Generator[list[EmbedTreeNode], None, None]:
-            if node.block_len < MIN_BLOCK_LEN:
-                return 
-
-            if getattr(node, 'is_custom_node', False):
-                return
-
-            # If this path has custom nodes, we must check children
-            if node.node.type == "root" or getattr(node, 'has_custom_node', False):
-                current_group = []
-
-                for child in node.children:
-                    # If child is a 'clean' branch (no custom nodes), collect it
-                    if not getattr(child, 'has_custom_node', False) and not getattr(child, 'is_custom_node', False):
-                        if child.block_len >= MIN_BLOCK_LEN:
-                            current_group.append(child)
-                    else:
-                        # We hit a 'custom' branch, so flush the current group first
-                        if current_group:
-                            yield current_group
-                            current_group = []
-                        # Then recurse into the branch that HAS custom nodes
-                        yield from find_straggle_branches(child)
-
-                # Flush any remaining group at the end of siblings
-                if current_group:
-                    yield current_group
-            else:
-                # This whole branch is an orphan
-                yield [node]     
-            
+        
 
         #Get straggler branches that come in as a list[list[EmbedTreeNode]], these lists of nodes represent branches that don't have a prent heading 
         straggler_batches = [batch for batch in find_straggle_branches(self) if(batch)]
