@@ -30,12 +30,14 @@ class EmbedTreeNode():
         self.node:SyntaxTreeNode = node
         self.type:str = self.node.type 
         self.emb_model:OpenAIEmbeddings = emb_model
-        self.emb = np.zeros(1536)
-        self.mean_emb = self.emb
+        self.emb = None
         self.parent = parent
         self.children:list[EmbedTreeNode] = []
         
         self.has_embedding = False
+        self.is_pruned = False
+        self.needs_gen_heading = False
+
         self.content = getattr(self.node,'content',"") or ""
         self.block_len = len(self.content.split(" "))  #0 if (self.node.type=="root") else len(self.node.content)
         self.is_custom_node = is_custom
@@ -116,42 +118,19 @@ class EmbedTreeNode():
         etree.block_len +=sum(all_block_lens)
 
 
-    @classmethod
-    def _calc_mean_embedding(cls, node): 
-        for child in node.children: 
-           cls._calc_mean_embedding(child)
-
-        # Collect only non-None, non-zero embeddings from children
-        children_embs = [c.mean_emb for c in node.children if c.mean_emb is not None and np.any(c.mean_emb)]
-
-        current_emb = node.emb if (node.emb is not None and np.any(node.emb)) else None
-
-        if children_embs or current_emb is not None:
-            all_vecs = children_embs + ([current_emb] if current_emb is not None else [])
-            node.mean_emb = np.mean(all_vecs, axis=0)
-
 
     @classmethod     
     def _embed_tree_(cls,node): 
-        '''
-        etree:cls = node
-        all_content = etree.apply(lambda enode: enode.node.content)
-        print(f"List of all content being embedded")
-        tree_vectors = etree.emb_model.embed_documents(list(all_content))
-        all_enodes = etree.apply(lambda enode: enode)
-        for enode,vector in zip(all_enodes,tree_vectors): 
-            enode.emb = vector
-            enode.mean_emb = enode.emb
-        '''
-        etree:cls = node 
-        nodes = etree.apply(lambda enode: enode)
-        heading_nodes = list(filter(lambda enode: endoe.type == 'heading', nodes))
+        heading_nodes = [n for n in node.apply(lambda x: x) if n.type == 'heading']
+        
+        if not heading_nodes:
+            return
         heading_nodes_content = [h_node.content for h_node in heading_nodes]
-        heading_node_vectors = etree.emb_model.embed_documents(list(heading_nodes_content))
+        heading_node_vectors = node.emb_model.embed_documents(heading_nodes_content)
+
         for h_node,h_vector in zip(heading_nodes,heading_node_vectors):
             h_node.has_embedding = True 
             h_node.emb = h_vector
-            h_node.mean_emb = h_vector
             
 
             
@@ -178,16 +157,33 @@ class EmbedTreeNode():
         # 4. Swap node for custom_node in the parent's list at the same index
         parent.children[idx] = custom_node
 
-        custom_node.mean_emb = node.mean_emb
+
+    @classmethod 
+    def _insert_batch_before(cls,batch_node):
+        first_child = batch_node.children[0]
+        parent = child.parent
+        if not parent or first_child.type=='root': 
+            return
+
+        #If we want to retain our place the hierarchy, we need to keep track of the idx of the batch
+        # and reinsert our custom batch node at that idx.
+        idx = parent.children.index
+
+        for batch_child in batch_node.children:
+            batch_child.parent = batch_node 
+            parent.children.remove(batch_child)
+
+        batch_node.parent = parent
+        parent.children.insert(idx,batch_node)
 
     @classmethod 
     def remove_branch(cls,node): 
         if not node.parent or node.type=="root": 
             return  
         parent = node.parent
-        #1. Find where the node was is in the parent's list
-        idx = parent.children.index(node)
-        parent.children.remove(idx)
+        #remove the child
+        parent.children.remove(node)
+        node.parent = None
 
 
 
@@ -221,7 +217,71 @@ class EmbedTreeNode():
 
         insert_custom_heading helper functions
 
-    '''
+    '''   
+
+    class DB_Heading(BaseModel): 
+        id: str 
+        heading: Optional[str]
+        position: Optional[int]
+        embedding: List[float]
+         
+
+
+    def match_headings(self,db_headings:list[DB_Heading],pdf_heading_nodes) -> dict[Self,str]:
+        
+        heading_vecs = np.array([h.embedding for h in db_headings if len(h.embedding) == 1536])
+        
+        def check_node_against_headings(node)->tuple[str,Self]:
+            if heading_vecs.size==0: 
+                return
+            if node.type=="root":
+                return
+            if node.block_len<MIN_BLOCK_LEN:
+                return
+            if not node.has_embedding: 
+                return
+            most_similar_idx,similarity = find_closest_cosine_sim(node.mean_emb,heading_vecs)
+            if similarity<SIMILARITY_THRESHOLD:
+                return
+            return (db_headings[most_similar_idx].heading,node)
+
+        print(f"Fetched Headings len:{len(db_headings)}")
+        #heading_node_pairs:list[tuple[str,Self]] = list(self.apply(check_node_against_headings)) 
+        node_heading_pairs = {
+            node: heading 
+            for result in self.apply(check_node_against_headings)
+            if result is not None 
+            for heading, node in [result] # unpacking trick for a singular tuple within the comprehension
+        }
+        return node_heading_pairs
+
+
+
+
+    def remove_different_heading_child_branches(self,parent_heading:str,node_heading_pairs:dict[Self,str]):
+        if not parent_heading:
+            parent_heading = node_heading_pairs.get(self)
+            if not parent_heading:
+                # If this is the root, just recurse into children without a lock yet
+                if self.type == "root":
+                    for child in list(self.children):
+                        child.remove_different_heading_child_branches(None, node_heading_pairs)
+                    return
+                else:
+                    raise Exception('Can remove different heading child branches from headingless node')
+        
+        for child in list(self.children): #iterate over a copy of self.children, don't have to deal w/index shifts 
+            matched_heading = node_heading_pairs.get(child)
+            if matched_heading: 
+                if not (parent_heading == matched_heading): 
+                    child.is_pruned = True
+                    type(self).remove_branch(child)
+                    continue
+                else: 
+                    child.is_custom_node = False
+            child.remove_different_heading_child_branches(parent_heading=parent_heading,node_heading_pairs=node_heading_pairs)
+
+
 
 
     def find_straggle_branches(node) -> Generator[list[EmbedTreeNode], None, None]:
@@ -253,143 +313,19 @@ class EmbedTreeNode():
                     yield current_group
             else:
                 # This whole branch is an orphan
-                yield [node]     
-
-    class DB_Heading(BaseModel): 
-        id: str 
-        heading: Optional[str]
-        position: Optional[int]
-        embedding: List[float]
-         
-    def match_headings(self,db_headings:list[DB_Heading],pdf_heading_nodes) -> dict[Self,str]:
-        
-        heading_vecs = np.array([h.embedding for h in db_headings if len(h.embedding) == 1536])
-        
-        def check_node_against_headings(node)->tuple[str,Self]:
-            if heading_vecs.size==0: 
-                return
-            if node.type=="root":
-                return
-            if node.block_len<MIN_BLOCK_LEN:
-                return
-            if not node.has_embedding: 
-                return
-            most_similar_idx,similarity = find_closest_cosine_sim(node.mean_emb,heading_vecs)
-            if similarity<SIMILARITY_THRESHOLD:
-                return
-            return (db_headings[most_similar_idx].heading,node)
-
-        print(f"Fetched Headings len:{len(db_headings)}")
-        #heading_node_pairs:list[tuple[str,Self]] = list(self.apply(check_node_against_headings)) 
-        node_heading_pairs = {
-            node: heading 
-            for result in self.apply(check_node_against_headings)
-            if result is not None 
-            for heading, node in [result] # unpacking trick for a singular tuple within the comprehension
-        }
-        return node_heading_pairs
+                yield [node]  
 
 
-    def remove_different_heading_child_branches(self,parent_heading:str,node_heading_pairs:dict[Self,str]):
-        if not parent_heading: 
-            parent_heading = node_heading_pairs.get(self)
-            if not parent_heading: 
-                raise Exception('Can remove different heading child branches from headingless node')
-        for child in list(self.children): #iterate over a copy of self.children, don't have to deal w/index shifts 
-            matched_heading = node_heading_pairs.get(child)
-            if matched_heading: 
-                if not (parent_heading == matched_heading): 
-                    type(self).remove_branch(child)
-                    continue
-                else: 
-                    child.is_custom_node = False
-            child.remove_different_heading_child_branches(parent_heading=parent_heading,node_heading_pairs=node_heading_pairs)
 
-    
 
-    def insert_custom_headings(self,headings):
 
-        #Makes heading:node pairs for nodes most similar to headings
-        heading_vecs = [heading['embedding'] for heading in headings if len(heading['embedding'])==1536]
-        heading_vecs = np.array(heading_vecs)
-        
-        def check_node_against_headings(node)->tuple[Any,Any]:
-            if heading_vecs.size==0: 
-                return
-            if node.type=="root":
-                return
-            if node.block_len<MIN_BLOCK_LEN:
-                return
-            if not node.has_embedding: 
-                return
-            most_similar_idx,similarity = find_closest_cosine_sim(node.mean_emb,heading_vecs)
-            if similarity<SIMILARITY_THRESHOLD:
-                return
-            return (headings[most_similar_idx],node)
+    def insert_custom_headings(self,headings:list[DB_Heading]):
 
-        print(f"Fetched Headings len:{len(headings)}")
-        heading_node_pairs:list[tuple[Any,node]] = self.apply(check_node_against_headings) 
-        heading_node_pairs = [pair for pair in heading_node_pairs if (pair)] 
-        node_only_list = [node for (_,node) in heading_node_pairs]
-        #print(f"Heading node pairs:{heading_node_pairs}")
-        def parents_exist_in_list(node)->bool:
-            curr = node.parent
-            while curr: 
-                if curr in node_only_list:
-                    return True
-                curr = curr.parent
-            return False
 
-        pruned_node_list = []
-        for i,node in enumerate(node_only_list): 
-            if parents_exist_in_list(node):
-                continue
-            pruned_node_list.append(heading_node_pairs[i])
-
-        #kinda goofy, but loosing reference will hopefully make python garbage
-        #collector pick it up
-        heading_node_pairs:list[tuple[Any,node]] = pruned_node_list
-        all_final_custom_nodes = []
-        mdit = MarkdownIt()
-        #Inserting custom heading into tree
-        custom_nodes:EmbedTreeNode = []
-        for heading,node in heading_node_pairs: 
-            '''
-            md = mdit.parse(f"#{heading['heading']}")             
-            cus_node = EmbedTreeNode(SyntaxTreeNode(md),self.emb_model,parent=None,is_custom=True)
-            '''
-            md = mdit.parse(f"#{heading['heading']}")
-            syntax_tree = SyntaxTreeNode(md)
-    
-            # Extract the heading node, not the root
-            if syntax_tree.children and len(syntax_tree.children) > 0:
-                heading_node = syntax_tree.children[0]
-            else:
-                heading_node = syntax_tree
-    
-            cus_node = EmbedTreeNode(heading_node, self.emb_model, parent=None, is_custom=True)
-            if node.is_custom_node or (node.parent and node.parent.is_custom_node):
-                continue
-            cus_node.content = heading['heading']
-            cus_node.is_custom_node = True 
-            cus_node.has_custom_node = True
-            node.claimed = True
-            EmbedTreeNode._insert_custom_before(node, cus_node)
-            custom_nodes.append(cus_node)
-            all_final_custom_nodes.append(cus_node)
-        
-        #Propogate has_custom_node flag upwards 
-        for node in custom_nodes: 
-            curr = node 
-            while curr: 
-                curr.has_custom_node = True 
-                curr = curr.parent
-                
-        
-
+        #Very important, maintain references to pdf_heading_nodes, branches will get pruned
+        pdf_heading_nodes = [node for node in self.apply(lambda enode: enode.has_embedding) if node]
         #Get straggler branches that come in as a list[list[EmbedTreeNode]], these lists of nodes represent branches that don't have a prent heading 
         straggler_batches = [batch for batch in find_straggle_branches(self) if(batch)]
-        
         #Get the filtered content of each batch(after assembling all the batch text get the first 30, the middle 30 and the last 30 characters)
         straggler_batch_content = []
         for batch in straggler_batches: 
@@ -397,15 +333,15 @@ class EmbedTreeNode():
             for batch_node in batch: 
                 batch_content+=batch_node.get_full_text()
             straggler_batch_content.append(batch_content)
+        
         #filtered batch content
         straggler_batch_sampled_content = [get_sampled_text(content) for content in straggler_batch_content]
         
-        #get the open_ai generated headings for the filtered content 
-        generated_headings = generate_headings_from_sentences(straggler_batch_sampled_content)
 
-        generated_nodes = []
-        for batch, heading in zip(straggler_batches,generated_headings): 
-            print("Heading generated") 
+        #Make custom batch nodes
+        batch_nodes = []
+        for batch, heading in zip(straggler_batches,straggler_batch_sampled_content): 
+            print("New Batch Node Made") 
             md = mdit.parse(f"#{heading}")
             syntax_tree = SyntaxTreeNode(md)
 
@@ -421,50 +357,31 @@ class EmbedTreeNode():
             cus_node.content = heading
             cus_node.is_custom_node = True 
             cus_node.has_custom_node = True
-            generated_nodes.append(cus_node)
-            #node.claimed = True
-            
-            
-        '''
-        straggler_branches = [node for node in find_straggle_branches(self) if(node)]#self.apply(lambda node: if (not node.is_custom_node and node.block_len>=MIN_BLOCK_LEN) node)    
-        new_heading_needed:list[EmbedTreeNode] = []
-        for branch in straggler_branches: 
-            #handles redefines
-            if branch.type == "heading": 
-                branch.is_custom_node = True
-                branch.has_custom_node = True 
-                all_final_custom_nodes.append(branch)
-                continue
-            new_heading_needed.append(branch)
+            cus_node.children = batch
 
-        #limit length of string being sent later    
-        needed_headings = [EmbedTreeNode.get_full_text(node).split(".")[0] for node in new_heading_needed]  
-        generated_headings = generate_headings_from_sentences(needed_headings)    
-        generated_nodes = []  
-        for i, node in enumerate(new_heading_needed):
-            print("Heading generated") 
-            md = mdit.parse(f"#{generated_headings[i]}")
-            syntax_tree = SyntaxTreeNode(md)
+            type(self)._insert_batch_before(cus_node)
 
-            # The parsed tree structure is: root -> heading
-            # So we need to get the first child (the actual heading node)
-            if syntax_tree.children and len(syntax_tree.children) > 0:
-                heading_node = syntax_tree.children[0]  # Get the actual heading, not root
-            else:
-                # Fallback: create a simple heading node manually
-                heading_node = syntax_tree
+            batch_nodes.append(cus_node)
 
-            cus_node = EmbedTreeNode(heading_node, self.emb_model, parent=None, is_custom=True)
-            cus_node.content = generated_headings[i]
-            cus_node.is_custom_node = True 
-            cus_node.has_custom_node = True
-            node.claimed = True
-            EmbedTreeNode._insert_custom_before(node, cus_node)
-            generated_nodes.append(cus_node)
-            #all_final_custom_nodes.append(cus_node)
-        all_final_custom_nodes.extend(generated_nodes)
-        return (generated_nodes,all_final_custom_nodes)
-        '''
+        straggler_batch_vectors = self.emb_model.embed_documents(straggler_batch_sampled_content)
+        
+        #Embedding the sampled content from batches
+        for h_node,h_vector in zip(batch_nodes,straggler_batch_vectors):
+            h_node.has_embedding = True 
+            h_node.emb = h_vector    
+
+        node_heading_pairs = self.match_headings(db_headings=headings)
+        self.remove_different_heading_child_branches(parent_heading=None,node_heading_pairs=node_heading_pairs)
+        
+
+        
+
+
+
+
+
+
+
 
 
 
