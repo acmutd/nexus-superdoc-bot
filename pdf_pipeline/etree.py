@@ -323,7 +323,7 @@ class EmbedTreeNode():
 
 
         #Very important, maintain references to pdf_heading_nodes, branches will get pruned
-        pdf_heading_nodes = [node for node in self.apply(lambda enode: enode.has_embedding) if node]
+        pdf_heading_nodes = [node for node in self.apply(lambda enode: enode) if node.has_embedding]
         #Get straggler branches that come in as a list[list[EmbedTreeNode]], these lists of nodes represent branches that don't have a prent heading 
         straggler_batches = [batch for batch in find_straggle_branches(self) if(batch)]
         #Get the filtered content of each batch(after assembling all the batch text get the first 30, the middle 30 and the last 30 characters)
@@ -373,9 +373,15 @@ class EmbedTreeNode():
         node_heading_pairs = self.match_headings(db_headings=headings)
         self.remove_different_heading_child_branches(parent_heading=None,node_heading_pairs=node_heading_pairs)
         
+        pruned_branches = [node for node in pdf_heading_nodes+batch_nodes if node.is_pruned]
+        main_tree_branches = [node for node in self.apply(lambda enode: enode.is_custom_node) if node]
+        all_cust_nodes = main_tree_branches + pruned_branches
 
-        
+        all_matched_nodes = node_heading_pairs.keys()
 
+        new_cust_nodes_set = set(all_cust_nodes) - set(all_matched_nodes)
+        new_cust_nodes = list(new_cust_nodes_set)
+        return new_cust_nodes,all_cust_nodes
 
 
 
