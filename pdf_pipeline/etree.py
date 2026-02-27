@@ -36,7 +36,6 @@ class EmbedTreeNode():
         
         self.has_embedding = False
         self.is_pruned = False
-        self.needs_gen_heading = False
 
         self.content = getattr(self.node,'content',"") or ""
         self.block_len = len(self.content.split(" "))  #0 if (self.node.type=="root") else len(self.node.content)
@@ -167,7 +166,7 @@ class EmbedTreeNode():
 
         #If we want to retain our place the hierarchy, we need to keep track of the idx of the batch
         # and reinsert our custom batch node at that idx.
-        idx = parent.children.index
+        idx = parent.children.index(first_child)
 
         for batch_child in batch_node.children:
             batch_child.parent = batch_node 
@@ -238,11 +237,11 @@ class EmbedTreeNode():
                 return
             if node.block_len<MIN_BLOCK_LEN:
                 return
-            if not node.has_embedding: 
+            if not node.has_embedding or node.emb is None: 
                 return
-            most_similar_idx,similarity = find_closest_cosine_sim(node.mean_emb,heading_vecs)
+            most_similar_idx,similarity = find_closest_cosine_sim(node.emb,heading_vecs)
             if similarity<SIMILARITY_THRESHOLD:
-                return
+                return   
             return (db_headings[most_similar_idx].heading,node)
 
         print(f"Fetched Headings len:{len(db_headings)}")
@@ -319,7 +318,7 @@ class EmbedTreeNode():
 
 
 
-    def insert_custom_headings(self,headings:list[DB_Heading]):
+    def reconcile_structure(self,headings:list[DB_Heading]):
 
 
         #Very important, maintain references to pdf_heading_nodes, branches will get pruned
@@ -336,11 +335,11 @@ class EmbedTreeNode():
         
         #filtered batch content
         straggler_batch_sampled_content = [get_sampled_text(content) for content in straggler_batch_content]
-        
+        generated_headings = generate_headings_from_sentences(straggler_batch_sampled_content)
 
         #Make custom batch nodes
         batch_nodes = []
-        for batch, heading in zip(straggler_batches,straggler_batch_sampled_content): 
+        for batch, heading in zip(straggler_batches,generated_headings): 
             print("New Batch Node Made") 
             md = mdit.parse(f"#{heading}")
             syntax_tree = SyntaxTreeNode(md)
@@ -363,24 +362,30 @@ class EmbedTreeNode():
 
             batch_nodes.append(cus_node)
 
-        straggler_batch_vectors = self.emb_model.embed_documents(straggler_batch_sampled_content)
+
+        straggler_batch_vectors = self.emb_model.embed_documents(generated_headings)
         
         #Embedding the sampled content from batches
         for h_node,h_vector in zip(batch_nodes,straggler_batch_vectors):
             h_node.has_embedding = True 
-            h_node.emb = h_vector    
+            h_node.emb = np.array(h_vector)    
 
         node_heading_pairs = self.match_headings(db_headings=headings)
         self.remove_different_heading_child_branches(parent_heading=None,node_heading_pairs=node_heading_pairs)
         
+        
+
+
+
         pruned_branches = [node for node in pdf_heading_nodes+batch_nodes if node.is_pruned]
         main_tree_branches = [node for node in self.apply(lambda enode: enode.is_custom_node) if node]
+        
         all_cust_nodes = main_tree_branches + pruned_branches
-
         all_matched_nodes = node_heading_pairs.keys()
 
         new_cust_nodes_set = set(all_cust_nodes) - set(all_matched_nodes)
         new_cust_nodes = list(new_cust_nodes_set)
+        
         return new_cust_nodes,all_cust_nodes
 
 
