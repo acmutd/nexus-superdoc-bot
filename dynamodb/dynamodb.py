@@ -8,7 +8,7 @@ def test():
     current_credentials = credentials.get_frozen_credentials()
     
     # This will print which access key is being used to your logs
-    print(f"Using Access Key: {current_credentials.access_key}")
+    #print(f"Using Access Key: {current_credentials.access_key}")
 
 
 dynamodb = boto3.resource('dynamodb')

@@ -31,6 +31,7 @@ class EmbedTreeNode():
         self.type:str = self.node.type 
         self.emb_model:OpenAIEmbeddings = emb_model
         self.emb = None
+        self.mean_emb = self.emb
         self.parent = parent
         self.children:list[EmbedTreeNode] = []
         
@@ -116,6 +117,20 @@ class EmbedTreeNode():
         all_block_lens = [child.block_len for child in etree.children]
         etree.block_len +=sum(all_block_lens)
 
+
+    @classmethod
+    def _calc_mean_embedding(cls, node): 
+        for child in node.children: 
+           cls._calc_mean_embedding(child)
+
+        # Collect only non-None, non-zero embeddings from children
+        children_embs = [c.mean_emb for c in node.children if c.mean_emb is not None and np.any(c.mean_emb)]
+
+        current_emb = node.emb if (node.emb is not None and np.any(node.emb)) else None
+
+        if children_embs or current_emb is not None:
+            all_vecs = children_embs + ([current_emb] if current_emb is not None else [])
+            node.mean_emb = np.mean(all_vecs, axis=0)
 
 
     @classmethod     
@@ -214,7 +229,7 @@ class EmbedTreeNode():
 
     '''
 
-        insert_custom_heading helper functions
+        reconciliation helper functions
 
     '''   
 
@@ -239,7 +254,7 @@ class EmbedTreeNode():
                 return
             if not node.has_embedding or node.emb is None: 
                 return
-            most_similar_idx,similarity = find_closest_cosine_sim(node.emb,heading_vecs)
+            most_similar_idx,similarity = find_closest_cosine_sim(node.mean_emb,heading_vecs)
             if similarity<SIMILARITY_THRESHOLD:
                 return   
             return (db_headings[most_similar_idx].heading,node)
@@ -370,6 +385,7 @@ class EmbedTreeNode():
             h_node.has_embedding = True 
             h_node.emb = np.array(h_vector)    
 
+        type(self)._calc_mean_embedding(self)
         node_heading_pairs = self.match_headings(db_headings=headings)
         self.remove_different_heading_child_branches(parent_heading=None,node_heading_pairs=node_heading_pairs)
         
