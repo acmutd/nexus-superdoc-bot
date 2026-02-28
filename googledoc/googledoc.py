@@ -14,7 +14,8 @@ from googleapiclient.discovery import build, Resource
 from googleapiclient.errors import HttpError
 from langchain_core.documents import Document
 
-from pdf_pipeline.parse import EmbedTreeNode, GdocTreeNode, pdf_to_syntree
+from pdf_pipeline.etree import EmbedTreeNode
+from pdf_pipeline.gdoctree import GdocTreeNode
 from io import BytesIO
 
 from collections import defaultdict
@@ -220,7 +221,17 @@ class GoogleDocsEditor(GoogleDocsAPI):
                     'endIndex': endIndex
                 }
             }
-        }
+        },
+        {
+                'updateTextStyle': {
+                    'textStyle': {'bold': True},
+                    'range': {
+                        'startIndex': startIndex,
+                        'endIndex': endIndex
+                    },
+                    'fields': 'bold'
+                }
+            }
     ]
         self.batch_update(requests=requests)
         return (startIndex,endIndex)
@@ -500,188 +511,6 @@ class GoogleDocsEditor(GoogleDocsAPI):
       
         self.batch_update(batch_all_requests)
         print(f"FINISHED BATCH UPDATE")
-
-
-    def insert_text(self, document_id: str, chunk_docs: list[Document]):
-        """
-        Inserts structured text into a Google Doc by identifying or creating headings,
-        managing Named Ranges for tracking, and applying bullet formatting.
-        """
-        # 1. INITIAL STATE CHECK
-        print("Attempting to insert")
-        requests = []
-        document = self.doc
-        if not document:
-            return False
-
-        heading_requests = []
-        headings_processed = []
-        heading_insertion_index = -1
-        print(f"Length of doc:{len(chunk_docs)}")
-
-        # 2. HEADING PREPARATION PHASE
-        # Before adding content, ensure every "chunk" has a corresponding heading in the doc.
-        for chunk in chunk_docs:
-            print(f"Chunk:{chunk}")
-            # Extract the heading name from metadata
-            heading = chunk.metadata.get('position', None)
-            heading = heading[-1] if heading else None
-
-            # Fallback logic: if no heading is provided, default to "Basic"
-            if(not heading): 
-                print(f"No Heading found:\n{chunk}")
-                heading = "Basic"
-                chunk.metadata['position'] = heading
-
-            # Check if the heading already exists in the document structure
-            (_, insertion_index, code) = self.find_insertion_point(heading)
-            heading_insertion_index = insertion_index
-
-            # If heading exists (code != -1) or we've already handled it in this loop, skip
-            if(code != -1 or heading in headings_processed):
-                continue
-
-            # Prepare requests to insert the new heading text
-            startIndex = heading_insertion_index 
-            # Calculate index using UTF-16 encoding because Google Docs API 
-            # treats indices as 16-bit code units.
-            endIndex = startIndex + len((heading + "\n").encode("utf-16-le")) // 2
-
-            print(f"Messing with heading:{heading}")
-            heading_requests.append({
-                'insertText': {
-                    'location': {'index': startIndex},
-                    'text': (heading + '\n\n')  # Create space for content below
-                }
-            })
-            # Wrap the heading in a 'Named Range' so we can find it easily later
-            heading_requests.append({
-                'createNamedRange': {
-                    'name': heading,
-                    'range': {
-                        'startIndex': startIndex,
-                        'endIndex': endIndex - 1
-                    }
-                }
-            })
-            heading_insertion_index = endIndex
-            headings_processed.append(heading)
-
-        # Execute heading creation and refresh local document structure
-        self.batch_update(heading_requests)
-        self.get_document_structure(document_id=document_id)
-
-        # 3. CONTENT INSERTION PHASE
-        text_requests = []
-        range_dict = {}
-
-        # Reverse the chunks to insert from the bottom up (or maintain correct indices)
-        chunk_docs = chunk_docs[::-1]
-        for chunk in chunk_docs:
-            heading = chunk.metadata.get('position', None)
-            heading = heading[-1] if (heading) else None
-
-            # Determine where to insert the body text relative to the heading
-            if heading in range_dict: 
-                # Use previously calculated indices if we've already touched this heading
-                namedRangeStart = range_dict[heading][-1]['createNamedRange']['range']['startIndex']
-                namedRangeEnd = range_dict[heading][-1]['createNamedRange']['range']['endIndex'] + 1
-                code = 0
-            else:
-                # Look up the heading's location in the freshly updated doc
-                (namedRangeStart, namedRangeEnd, code) = self.find_insertion_point(target_heading=heading)    
-                if code != 0: 
-                    raise Exception(f"Unfound Heading: {heading}, code:{code}")
-
-            # Prepare the text to be inserted as a bullet point
-            para_bulletin = chunk.page_content + '\n'
-            endIndex = namedRangeEnd + len((para_bulletin).encode("utf-16-le")) // 2
-
-            # Insert the text immediately after the heading
-            text_requests.append({
-                'insertText': {
-                    'location': {
-                        'index': namedRangeStart + len((heading + ":").encode("utf-16-le")) // 2 
-                    },
-                    'text': para_bulletin
-                }
-            })
-
-            # Google Docs Named Ranges don't auto-expand. 
-            # We store requests to Delete and Re-create the range to encompass the new text.
-            range_dict[heading] = [
-                {'deleteNamedRange': {'name': heading}},
-                {
-                    'createParagraphBullets': {
-                        'range': {
-                            'startIndex': namedRangeStart + len((heading + ":").encode("utf-16-le")) // 2,
-                            'endIndex': endIndex - 1
-                        },
-                        'bulletPreset': 'BULLET_DISC_CIRCLE_SQUARE',
-                    }
-                },                   
-                {
-                    'createNamedRange': {
-                        'name': heading,
-                        'range': {
-                            'startIndex': namedRangeStart,
-                            'endIndex': endIndex - 1
-                        }
-                    }   
-                }
-            ]
-
-        # Sort and insert text content
-        text_requests = self.descending_sort_inserttext(text_requests)
-        self.batch_update(requests=text_requests)
-        self.get_document_structure(document_id=document_id)
-
-        # 4. FINAL FORMATTING & RANGE UPDATES
-        # We must re-verify start indices because inserting text shifted the document
-        for heading in range_dict: 
-            (namedRangeStart, _, code) = self.find_insertion_point(target_heading=heading)    
-            if code != 0: 
-                raise Exception(f"Unfound Heading: {heading}, code:{code}")
-
-            # Recalculate offsets based on the actual shift in the document
-            prevStart = range_dict[heading][-1]['createNamedRange']['range']['startIndex']
-            prevEnd = range_dict[heading][-1]['createNamedRange']['range']['endIndex'] + 1 
-            endIndex = namedRangeStart + (prevEnd - prevStart)
-
-            # Final formatting: Clear existing bullets and re-apply to the whole range
-            range_dict[heading] = [
-                {'deleteNamedRange': {'name': heading}},
-                {
-                    'deleteParagraphBullets': {
-                        'range': {
-                            'startIndex': namedRangeStart,
-                            'endIndex': endIndex - 1
-                        },
-                    }
-                },
-                {
-                    'createParagraphBullets': {
-                        'range': {
-                            'startIndex': namedRangeStart + len((heading + ":").encode("utf-16-le")) // 2,
-                            'endIndex': endIndex - 1
-                        },
-                        'bulletPreset': 'BULLET_DISC_CIRCLE_SQUARE',
-                    }
-                },                   
-                {
-                    'createNamedRange': {
-                        'name': heading,
-                        'range': {
-                            'startIndex': namedRangeStart,
-                            'endIndex': endIndex - 1
-                        }
-                    }   
-                }
-            ]    
-
-        # Combine all formatting and range requests into a single final batch update
-        range_req = list(chain(*range_dict.values()))
-        self.batch_update(requests=range_req)
 
 def insert_text_ex(): 
      # Initialize the editorpinecone_api_key = os.environ.get("PINECONE_API_KEY")

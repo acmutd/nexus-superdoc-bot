@@ -55,42 +55,39 @@ class GdocTreeNode():
         node_type = self.node.type
         context = context or {}
 
-        if node_type == "paragraph":
-            # Paragraph is now the leaf renderer
-            return self._format_paragraph_as_leaf(index, level, context)
-        elif self.is_custom_node:
+        if self.is_custom_node:
             header_text = f"{self.content}:\n\n"
             u16_len = text_utf16_len(header_text)
 
-            text_request = {
-                'insertText': {
-                    'text': header_text,
-                    'location': {'index': index}
-                }
-            }
+            start_index = index - u16_len
 
             # Make the custom header bold
+            '''
             format_request = {
                 'updateTextStyle': {
                     'textStyle': {'bold': True},
                     'range': {
-                        'startIndex': index,
-                        'endIndex': index + u16_len
+                        'startIndex': start_index,
+                        'endIndex': start_index + u16_len
                     },
                     'fields': 'bold'
                 }
             }
+            '''
+            return [], [], 0    
 
-            return [text_request], [format_request], u16_len    
-
-        elif node_type == "heading":
+        if node_type == "heading":
             return self._format_heading(index, level)
 
-        elif node_type in ["bullet_list", "ordered_list"]:
+        if node_type == "paragraph":
+            # Paragraph is now the leaf renderer
+            return self._format_paragraph_as_leaf(index, level, context)
+        
+        if node_type in ["bullet_list", "ordered_list"]:
             # Lists don't insert text themselves, they just pass context to children
             return [], [], 0 
 
-        elif node_type == "list_item":
+        if node_type == "list_item":
             # Determine list type from parent or node attribute
             list_type = context.get("list_type", "BULLET") 
             return [], [], 0 # Handled by the paragraph child via context
@@ -118,7 +115,7 @@ class GdocTreeNode():
 
         # If this is a Paragraph, it has already processed its internal TEXT children.
         # We only recurse for non-leaf containers (Lists, Sections, etc.)
-        if self.node.type not in ["paragraph", "text"]:
+        if self.is_custom_node or self.node.type not in ["paragraph", "text"]:
             for child in self.children:
                 c_text, c_format, c_len = child.generate_formatted_requests(
                     start_index + current_offset, 
@@ -156,7 +153,7 @@ class GdocTreeNode():
         if not raw_content:
             return [], [], 0
     
-        final_text = f"{raw_content}\n"
+        final_text = f"{raw_content}\n\n"
         # Calculate length using UTF-16 (Google Docs requirement)
         text_len = len(final_text.encode("utf-16-le")) // 2
         

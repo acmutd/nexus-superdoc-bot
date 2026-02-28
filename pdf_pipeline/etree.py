@@ -5,12 +5,15 @@ from io import BytesIO
 import pymupdf.layout
 import pymupdf4llm
 import pymupdf
+from markdown_it import MarkdownIt  
+
+
 
 import numpy as np
 from langchain_openai import OpenAIEmbeddings,ChatOpenAI
 
 from pydantic import BaseModel
-from typing import List, Callable, Any, Generator, Iterator, Self ,TypeVar
+from typing import List, Callable, Any, Generator, Iterator, Self ,TypeVar, Optional
 from itertools import tee
 
 
@@ -21,7 +24,7 @@ import time
 import traceback
 
 
-MIN_BLOCK_LEN = 10
+MIN_BLOCK_LEN = 2
 SIMILARITY_THRESHOLD=0.97
 
 class EmbedTreeNode(): 
@@ -175,7 +178,7 @@ class EmbedTreeNode():
     @classmethod 
     def _insert_batch_before(cls,batch_node):
         first_child = batch_node.children[0]
-        parent = child.parent
+        parent = first_child.parent
         if not parent or first_child.type=='root': 
             return
 
@@ -200,6 +203,17 @@ class EmbedTreeNode():
         node.parent = None
 
 
+    @staticmethod
+    def rows_to_headings(rows: list[dict]) -> list["EmbedTreeNode.DB_Heading"]:
+        """Converts raw database dictionaries into DB_Heading Pydantic objects."""
+        headings = []
+        for row in rows:
+            try:
+                # This maps dict keys to Pydantic attributes automatically
+                headings.append(EmbedTreeNode.DB_Heading(**row))
+            except Exception as e:
+                print(f"[WARN] Skipping malformed DB row: {row}. Error: {e}")
+        return headings
 
 
     @classmethod
@@ -241,7 +255,7 @@ class EmbedTreeNode():
          
 
 
-    def match_headings(self,db_headings:list[DB_Heading],pdf_heading_nodes) -> dict[Self,str]:
+    def match_headings(self,db_headings:list[DB_Heading]) -> dict[Self,str]:
         
         heading_vecs = np.array([h.embedding for h in db_headings if len(h.embedding) == 1536])
         
@@ -273,16 +287,14 @@ class EmbedTreeNode():
 
 
     def remove_different_heading_child_branches(self,parent_heading:str,node_heading_pairs:dict[Self,str]):
-        if not parent_heading:
-            parent_heading = node_heading_pairs.get(self)
-            if not parent_heading:
-                # If this is the root, just recurse into children without a lock yet
-                if self.type == "root":
-                    for child in list(self.children):
-                        child.remove_different_heading_child_branches(None, node_heading_pairs)
-                    return
-                else:
-                    raise Exception('Can remove different heading child branches from headingless node')
+        current_match = node_heading_pairs.get(self)
+    
+        if current_match:
+            active_heading = current_match
+            self.is_custom_node = False # It's a verified match, no longer 'custom'
+        else:
+            # If no match, inherit the heading from above
+            active_heading = parent_heading
         
         for child in list(self.children): #iterate over a copy of self.children, don't have to deal w/index shifts 
             matched_heading = node_heading_pairs.get(child)
@@ -298,7 +310,7 @@ class EmbedTreeNode():
 
 
 
-    def find_straggle_branches(node) -> Generator[list[EmbedTreeNode], None, None]:
+    def find_straggle_branches(node) -> Generator[list['EmbedTreeNode'], None, None]:
             if node.block_len < MIN_BLOCK_LEN:
                 return 
 
@@ -334,22 +346,14 @@ class EmbedTreeNode():
 
 
     def reconcile_structure(self,headings:list[DB_Heading]):
-
-
+        mdit = MarkdownIt()
+        headings = type(self).rows_to_headings(headings)
         #Very important, maintain references to pdf_heading_nodes, branches will get pruned
         pdf_heading_nodes = [node for node in self.apply(lambda enode: enode) if node.has_embedding]
         #Get straggler branches that come in as a list[list[EmbedTreeNode]], these lists of nodes represent branches that don't have a prent heading 
-        straggler_batches = [batch for batch in find_straggle_branches(self) if(batch)]
+        straggler_batches = [batch for batch in self.find_straggle_branches() if(batch)]
         #Get the filtered content of each batch(after assembling all the batch text get the first 30, the middle 30 and the last 30 characters)
-        straggler_batch_content = []
-        for batch in straggler_batches: 
-            batch_content = ''
-            for batch_node in batch: 
-                batch_content+=batch_node.get_full_text()
-            straggler_batch_content.append(batch_content)
-        
-        #filtered batch content
-        straggler_batch_sampled_content = [get_sampled_text(content) for content in straggler_batch_content]
+        straggler_batch_sampled_content = [get_sampled_text(batch) for batch in straggler_batches]
         generated_headings = generate_headings_from_sentences(straggler_batch_sampled_content)
 
         #Make custom batch nodes
@@ -394,7 +398,7 @@ class EmbedTreeNode():
 
 
         pruned_branches = [node for node in pdf_heading_nodes+batch_nodes if node.is_pruned]
-        main_tree_branches = [node for node in self.apply(lambda enode: enode.is_custom_node) if node]
+        main_tree_branches = [node for node in self.apply(lambda enode: enode) if node.is_custom_node]
         
         all_cust_nodes = main_tree_branches + pruned_branches
         all_matched_nodes = node_heading_pairs.keys()
@@ -466,7 +470,7 @@ class EmbedTreeNode():
         node_id = f"ID:{id(self) % 10000}" # Helps track if the same object exists in two places
 
         # Build Header Line
-        header = f"{indent} {flags} {type_label} ({node_id}) tag='{self.node.tag}' [Len: {self.block_len}] [Mean Emb:{self.mean_emb[:3]}]"
+        header = f"{indent} {flags} {type_label} ({node_id}) tag='{self.node.tag}' [Len: {self.block_len}] [Mean Emb:{self.mean_emb[:3] if self.mean_emb else 0}]"
 
         # --- 3. CONTENT TRANSPARENCY ---
         # We check self.content (custom heading text) or node.content (original markdown text)

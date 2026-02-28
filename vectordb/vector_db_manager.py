@@ -18,7 +18,7 @@ from langchain_openai import ChatOpenAI
 from lexical.lexical_algs import extract_text_similarity_jaccard
 from googledoc.googledoc import GoogleDocsEditor
 
-from pdf_pipeline.parse import EmbedTreeNode, pdf_to_syntree
+from pdf_pipeline.etree import EmbedTreeNode
 from io import BytesIO
 '''
 Need this to, create tables automatically
