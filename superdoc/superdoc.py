@@ -153,7 +153,7 @@ class superdoc():
     
     
 if __name__ == '__main__': 
-    with open("files/Chloroplast 2.pdf", "rb") as f:
+    with open("files/basic-text.pdf", "rb") as f:
         pdf_bytes = f.read()
     strm = BytesIO(pdf_bytes)
 

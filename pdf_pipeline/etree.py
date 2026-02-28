@@ -309,37 +309,59 @@ class EmbedTreeNode():
 
 
 
-
-    def find_straggle_branches(node) -> Generator[list['EmbedTreeNode'], None, None]:
-            if node.block_len < MIN_BLOCK_LEN:
-                return 
-
-            if getattr(node, 'is_custom_node', False):
-                return
-
-            # If this path has custom nodes, we must check children
-            if node.node.type == "root" or getattr(node, 'has_custom_node', False):
-                current_group = []
-
-                for child in node.children:
-                    # If child is a 'clean' branch (no custom nodes), collect it
-                    if not getattr(child, 'has_custom_node', False) and not getattr(child, 'is_custom_node', False):
-                        if child.block_len >= MIN_BLOCK_LEN:
-                            current_group.append(child)
-                    else:
-                        # We hit a 'custom' branch, so flush the current group first
-                        if current_group:
-                            yield current_group
-                            current_group = []
-                        # Then recurse into the branch that HAS custom nodes
-                        yield from find_straggle_branches(child)
-
-                # Flush any remaining group at the end of siblings
-                if current_group:
-                    yield current_group
-            else:
-                # This whole branch is an orphan
-                yield [node]  
+    @staticmethod
+    def find_straggler_branches(node) -> Generator[list['EmbedTreeNode'], None, None]:
+        # 1. Immediate exit for tiny nodes
+        if node.block_len < MIN_BLOCK_LEN:
+            return 
+    
+        # 2. Boundary Check: If this node is already "Settled", don't batch it.
+        # We also treat HEADING types as boundaries to prevent nesting them.
+        is_boundary = (
+            getattr(node, 'is_custom_node', False) or 
+            getattr(node, 'has_embedding', False) or 
+            node.type == 'heading'
+        )
+    
+        if is_boundary and node.node.type != "root":
+            # This node is an "Anchor." We don't include it in a straggler batch,
+            # but we MUST check its children for orphans hidden underneath it.
+            for child in node.children:
+                yield from EmbedTreeNode.find_straggler_branches(child)
+            return
+    
+        # 3. Path Traversal: If we are at root or a branch that contains Anchors
+        if node.node.type == "root" or getattr(node, 'has_custom_node', False):
+            current_group = []
+    
+            for child in node.children:
+                # A child is "collectible" only if it's NOT a boundary 
+                # and doesn't contain boundaries deeper down.
+                child_is_boundary = (
+                    getattr(child, 'is_custom_node', False) or 
+                    getattr(child, 'has_embedding', False) or 
+                    child.type == 'heading' or
+                    getattr(child, 'has_custom_node', False)
+                )
+    
+                if not child_is_boundary:
+                    if child.block_len >= MIN_BLOCK_LEN:
+                        current_group.append(child)
+                else:
+                    # We hit a boundary! Flush what we have so far.
+                    if current_group:
+                        yield current_group
+                        current_group = []
+                    
+                    # Now recurse into that boundary node to find stragglers inside/after
+                    yield from EmbedTreeNode.find_straggler_branches(child)
+    
+            # Final flush for the end of the sibling list
+            if current_group:
+                yield current_group
+        else:
+            # 4. Pure Orphan: This node and its entire subtree are "Clean"
+            yield [node]
 
 
 
@@ -351,7 +373,7 @@ class EmbedTreeNode():
         #Very important, maintain references to pdf_heading_nodes, branches will get pruned
         pdf_heading_nodes = [node for node in self.apply(lambda enode: enode) if node.has_embedding]
         #Get straggler branches that come in as a list[list[EmbedTreeNode]], these lists of nodes represent branches that don't have a prent heading 
-        straggler_batches = [batch for batch in self.find_straggle_branches() if(batch)]
+        straggler_batches = [batch for batch in self.find_straggler_branches(self) if(batch)]
         #Get the filtered content of each batch(after assembling all the batch text get the first 30, the middle 30 and the last 30 characters)
         straggler_batch_sampled_content = [get_sampled_text(batch) for batch in straggler_batches]
         generated_headings = generate_headings_from_sentences(straggler_batch_sampled_content)
