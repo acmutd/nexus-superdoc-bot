@@ -307,6 +307,60 @@ class EmbedTreeNode():
                     child.is_custom_node = False
             child.remove_different_heading_child_branches(parent_heading=parent_heading,node_heading_pairs=node_heading_pairs)
 
+    def mark_structural_mismatch(self, target_heading: str, node_heading_pairs: dict):
+        """
+        Marks nodes that don't match the database heading label.
+        """
+        for child in self.children:
+            matched_heading = node_heading_pairs.get(child)
+
+            # If the child has a label and it doesn't match the parent's label, mark it
+            if matched_heading and target_heading and (matched_heading != target_heading):
+                child.is_pruned = True
+                # We don't recurse into pruned branches
+            else:
+                # Continue checking deeper
+                child.mark_structural_mismatch(target_heading, node_heading_pairs)
+
+    def mark_semantic_mismatch(self, anchor_vector: np.ndarray, threshold: float = 0.8):
+        """
+        Marks nodes that stray too far from the anchor vector's meaning.
+        """
+        if anchor_vector is None:
+            return
+
+        for child in self.children:
+            is_relevant = True
+            if child.mean_emb is not None:
+                norm_anchor = np.linalg.norm(anchor_vector)
+                norm_child = np.linalg.norm(child.mean_emb)
+
+                if norm_anchor > 0 and norm_child > 0:
+                    similarity = np.dot(anchor_vector, child.mean_emb) / (norm_anchor * norm_child)
+                    if similarity < threshold:
+                        is_relevant = False
+
+            if not is_relevant:
+                child.is_pruned = True
+            else:
+                child.mark_semantic_mismatch(anchor_vector, threshold)
+
+
+    def execute_pruning(self):
+        """
+        Physically removes nodes marked as is_pruned and yields them.
+        """
+        for child in list(self.children):
+            if child.is_pruned:
+                # 1. Remove from the parent's list
+                self.children.remove(child)
+                # 2. Break the link to parent
+                child.parent = None
+                # 3. Yield the whole pruned branch back to the caller
+                yield child
+            else:
+                # 4. Recurse and yield results from deeper levels
+                yield from child.execute_pruning()
 
 
     @staticmethod
@@ -371,7 +425,7 @@ class EmbedTreeNode():
         mdit = MarkdownIt()
         headings = type(self).rows_to_headings(headings)
         #Very important, maintain references to pdf_heading_nodes, branches will get pruned
-        pdf_heading_nodes = [node for node in self.apply(lambda enode: enode) if node.has_embedding]
+        #pdf_heading_nodes = [node for node in self.apply(lambda enode: enode) if node.has_embedding]
         #Get straggler branches that come in as a list[list[EmbedTreeNode]], these lists of nodes represent branches that don't have a prent heading 
         straggler_batches = [batch for batch in self.find_straggler_branches(self) if(batch)]
         #Get the filtered content of each batch(after assembling all the batch text get the first 30, the middle 30 and the last 30 characters)
@@ -399,6 +453,10 @@ class EmbedTreeNode():
             cus_node.has_custom_node = True
             cus_node.children = batch
 
+
+            for node in batch: 
+                node.parent = cus_node
+
             type(self)._insert_batch_before(cus_node)
 
             batch_nodes.append(cus_node)
@@ -413,20 +471,40 @@ class EmbedTreeNode():
 
         type(self)._calc_mean_embedding(self)
         node_heading_pairs = self.match_headings(db_headings=headings)
-        self.remove_different_heading_child_branches(parent_heading=None,node_heading_pairs=node_heading_pairs)
+        #self.remove_different_heading_child_branches(parent_heading=None,node_heading_pairs=node_heading_pairs)
         
+        for child in self.children: 
+            target_heading = node_heading_pairs.get(child)
+
+            if target_heading: 
+                child.mark_structural_mismatch(target_heading=target_heading,node_heading_pairs=node_heading_pairs)
+            if child.is_custom_node and child.emb is not None: 
+                child.mark_semantic_mismatch(anchor_vector=child.emb)
+
+            child.is_custom_node = True
+        print(self)
+
+        pruned_nodes = list(self.execute_pruning())
         
+        print(f"\n\n{"INSANITY"}\n\n")
+
+        print(self)
 
 
 
-        pruned_branches = [node for node in pdf_heading_nodes+batch_nodes if node.is_pruned]
-        main_tree_branches = [node for node in self.apply(lambda enode: enode) if node.is_custom_node]
+        main_tree_branches = [node for node in self.apply(lambda n: n) if getattr(node, 'is_custom_node', False)]
         
-        all_cust_nodes = main_tree_branches + pruned_branches
-        all_matched_nodes = node_heading_pairs.keys()
+        all_cust_nodes = main_tree_branches + pruned_nodes
+        
+        print(f"\n\nAll Pruned Nodes:{pruned_nodes}\n\n")
 
-        new_cust_nodes_set = set(all_cust_nodes) - set(all_matched_nodes)
-        new_cust_nodes = list(new_cust_nodes_set)
+        print(f"\n\nAll Custom Nodes:{all_cust_nodes}\n\n")
+
+        all_matched_nodes = set(node_heading_pairs.keys())
+
+        print(f"\n\nAll Matched Nodes:{all_matched_nodes}\n\n")
+
+        new_cust_nodes = [n for n in all_cust_nodes if n not in all_matched_nodes]
         
         return new_cust_nodes,all_cust_nodes
 
@@ -472,48 +550,66 @@ class EmbedTreeNode():
     def __str__(self) -> str:
         return self._format_tree(level=0)
 
+
     def _format_tree(self, level: int) -> str:
         indent = "  " * level
 
         # --- 1. ROOT SPECIFIC LOGIC ---
         if self.node.type == "root":
-            # Root is a container, we usually just want to see it and its children
             children_str = "".join([child._format_tree(level + 1) for child in self.children])
             return f"\n{indent}<ROOT> (Total Children: {len(self.children)}){children_str}"
 
-        # --- 2. STANDARD NODE LOGIC ---
-        # Identity & Flags
+        # --- 2. IDENTITY & FLAGS ---
         is_custom = getattr(self, 'is_custom_node', False)
         has_custom = getattr(self, 'has_custom_node', False)
+        is_pruned = getattr(self, 'is_pruned', False)
+        has_emb = getattr(self, 'has_embedding', False)
+        
+        flags = []
+        if is_custom: flags.append("CUS")
+        if has_custom: flags.append("+PATH")
+        if is_pruned: flags.append("PRUNED")
+        if has_emb: flags.append("ANCHOR")
+        
+        flag_str = "".join([f"[{f}]" for f in flags])
+        type_label = f"<{self.node.type.upper()}>"
+        node_id = f"ID:{id(self) % 10000}"
 
-        # Color-like markers for terminal readability
-        type_label = f" {self.node.type.upper()} "
-        flags = f"{'[CUS]' if is_custom else ''}{'[+PATH]' if has_custom else ''}"
-        node_id = f"ID:{id(self) % 10000}" # Helps track if the same object exists in two places
+        # --- 3. EMBEDDING PREVIEW (First 5 elements) ---
+        emb_preview = "None"
+        if self.mean_emb is not None:
+            # Handle both list and numpy array types safely
+            vals = self.mean_emb[:5]
+            emb_preview = "[" + ", ".join([f"{v:.3f}" for v in vals]) + "...]"
 
-        # Build Header Line
-        header = f"{indent} {flags} {type_label} ({node_id}) tag='{self.node.tag}' [Len: {self.block_len}] [Mean Emb:{self.mean_emb[:3] if self.mean_emb else 0}]"
+        # --- 4. ANCHOR CONTENT HIGHLIGHTING ---
+        # If this is an anchor, we want to see exactly what text the embedding represents
+        anchor_text_display = ""
+        if has_emb:
+            anchor_text_display = f"\n{indent}    >> ANCHOR TEXT: {self.content.strip()[:100]}"
 
-        # --- 3. CONTENT TRANSPARENCY ---
-        # We check self.content (custom heading text) or node.content (original markdown text)
+        # --- 5. BUILD HEADER ---
+        header = f"{indent} {flag_str:25} {type_label:12} ({node_id}) [Len: {self.block_len}]"
+        emb_line = f"{indent}    └─ MeanEmb: {emb_preview}"
+
+        # --- 6. GENERAL CONTENT SNIPPET ---
         display_text = ""
         if is_custom and self.content:
             display_text = f"CUSTOM_HEADER: {self.content}"
-        elif self.node.content.strip():
+        elif self.node.content and self.node.content.strip():
+            # Clean newlines for single-line preview
             clean_content = self.node.content.strip().replace('\n', ' ')
-            # Then put it in the f-string
-            display_text = f"RAW_CONTENT: {clean_content}"
-
+            display_text = f"RAW: {clean_content}"
 
         content_snippet = ""
         if display_text:
-            content_snippet = f"\n{indent}    | {display_text[:60]}..."
+            content_snippet = f"\n{indent}    │ {display_text[:85]}..."
 
-        # --- 4. RECURSION ---
+        # --- 7. RECURSION ---
         children_str = "".join([child._format_tree(level + 1) for child in self.children])
 
-        return f"\n{header}{content_snippet}{children_str}"
-
+        # Assemble the block
+        return f"\n{header}{anchor_text_display}{content_snippet}\n{emb_line}{children_str}"
 #Base Functions
 
 
