@@ -16,7 +16,6 @@ from fastapi import FastAPI, HTTPException, Body
 from mangum import Mangum
 from pydantic import BaseModel
 
-from superdoc.superdoc import superdoc
 
 app = FastAPI(title="SuperDoc API")
 
@@ -45,6 +44,16 @@ class CreateDocRequest(BaseModel):
     courseId: str
     documentName: str
 
+
+
+# --- Middleware ---
+@app.middleware("http")
+async def log_requests(request, call_next):
+    print(f"Incoming request: {request.method} {request.url.path}")
+    response = await call_next(request)
+    return response
+
+
 # --- Endpoints ---
 
 @app.get("/health")
@@ -53,6 +62,8 @@ def health_check():
 
 @app.post("/merge_pdf")
 def handle_merge_pdf(req: MergePDFRequest):
+    from superdoc.superdoc import superdoc
+
     try:
         with urllib.request.urlopen(req.pdfUrl) as response:
             if response.status != 200:
@@ -69,6 +80,8 @@ def handle_merge_pdf(req: MergePDFRequest):
 
 @app.post("/headings/create")
 def create_heading(req: HeadingOperation):
+    from superdoc.superdoc import superdoc
+
     try:
         sd = superdoc(DOCUMENT_ID=req.documentId, COURSE_ID=req.courseId, index_name=req.index_name)
         sd.create_heading(new_heading=req.heading)
@@ -78,6 +91,8 @@ def create_heading(req: HeadingOperation):
 
 @app.delete("/headings/delete")
 def delete_heading(req: HeadingOperation):
+    from superdoc.superdoc import superdoc
+
     try:
         sd = superdoc(DOCUMENT_ID=req.documentId, COURSE_ID=req.courseId, index_name=req.index_name)
         sd.delete_heading(old_heading=req.heading)
@@ -87,6 +102,8 @@ def delete_heading(req: HeadingOperation):
 
 @app.put("/headings/update")
 def update_heading(req: UpdateHeadingRequest):
+    from superdoc.superdoc import superdoc
+
     try:
         sd = superdoc(DOCUMENT_ID=req.documentId, COURSE_ID=req.courseId, index_name=req.index_name)
         sd.update_heading(old_heading=req.oldHeading, new_heading=req.newHeading)
@@ -96,6 +113,8 @@ def update_heading(req: UpdateHeadingRequest):
 
 @app.get("/documents/{course_id}")
 def get_course_documents(course_id: str):
+    from superdoc.superdoc import superdoc
+
     try:
         # We initialize with None to use the class helper methods
         sd = superdoc(DOCUMENT_ID="DUMMY", COURSE_ID=course_id)
@@ -106,6 +125,8 @@ def get_course_documents(course_id: str):
 
 @app.post("/documents/create")
 def create_new_document(req: CreateDocRequest):
+    from superdoc.superdoc import superdoc
+
     try:
         # Note: Using the standalone create_document method in the class
         sd = superdoc(DOCUMENT_ID="DUMMY", COURSE_ID=req.courseId)
@@ -119,4 +140,4 @@ def create_new_document(req: CreateDocRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 # Lambda Handler
-handler = Mangum(app)
+handler = Mangum(app, lifespan="off", api_gateway_base_path="/dev")

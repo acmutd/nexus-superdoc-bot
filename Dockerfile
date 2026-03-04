@@ -17,5 +17,6 @@ COPY . .
 
 
 #Fixes to get this working locally and simply
-ENTRYPOINT []
-CMD ["uvicorn", "lambda_function:app", "--host", "0.0.0.0", "--port", "8000"]
+#ENTRYPOINT []
+#CMD ["uvicorn", "lambda_function:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["lambda_function.handler"]
