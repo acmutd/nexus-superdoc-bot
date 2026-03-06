@@ -7,6 +7,7 @@ import pymupdf4llm
 import pymupdf
 from markdown_it import MarkdownIt  
 
+from pdf_pipeline.anchor_vector import load_embedding
 
 
 import numpy as np
@@ -24,7 +25,7 @@ import time
 import traceback
 
 
-MIN_BLOCK_LEN = 2
+MIN_BLOCK_LEN = 20
 SIMILARITY_THRESHOLD=0.97
 
 class EmbedTreeNode(): 
@@ -307,6 +308,35 @@ class EmbedTreeNode():
                     child.is_custom_node = False
             child.remove_different_heading_child_branches(parent_heading=parent_heading,node_heading_pairs=node_heading_pairs)
 
+    def mark_junk_branches(self, junk_anchor_vec: np.ndarray, threshold: float = 0.85):
+        """
+        Identify and mark branches that match the 'Junk' profile (TOC, Citations, etc.)
+        """
+        if junk_anchor_vec is None:
+            return
+
+        for child in self.children:
+            is_junk = False
+            if child.mean_emb is not None:
+                # Calculate Cosine Similarity
+                norm_anchor = np.linalg.norm(junk_anchor_vec)
+                norm_child = np.linalg.norm(child.mean_emb)
+
+                if norm_anchor > 0 and norm_child > 0:
+                    similarity = np.dot(junk_anchor_vec, child.mean_emb) / (norm_anchor * norm_child)
+                    
+                    # If similarity to the "Junk Anchor" is HIGH, mark for pruning
+                    if similarity > threshold:
+                        print(f"[PRUNE] Junk branch detected: {child.content[:50]} (Sim: {similarity:.4f})")
+                        is_junk = True
+
+            if is_junk:
+                child.is_pruned = True
+            else:
+                # Only recurse if this node isn't already junk
+                child.mark_junk_branches(junk_anchor_vec, threshold)    
+    
+    
     def mark_structural_mismatch(self, target_heading: str, node_heading_pairs: dict):
         """
         Marks nodes that don't match the database heading label.
@@ -424,8 +454,9 @@ class EmbedTreeNode():
     def reconcile_structure(self,headings:list[DB_Heading]):
         mdit = MarkdownIt()
         headings = type(self).rows_to_headings(headings)
-        #Very important, maintain references to pdf_heading_nodes, branches will get pruned
-        #pdf_heading_nodes = [node for node in self.apply(lambda enode: enode) if node.has_embedding]
+
+        
+
         #Get straggler branches that come in as a list[list[EmbedTreeNode]], these lists of nodes represent branches that don't have a prent heading 
         straggler_batches = [batch for batch in self.find_straggler_branches(self) if(batch)]
         #Get the filtered content of each batch(after assembling all the batch text get the first 30, the middle 30 and the last 30 characters)
@@ -473,6 +504,19 @@ class EmbedTreeNode():
         node_heading_pairs = self.match_headings(db_headings=headings)
         #self.remove_different_heading_child_branches(parent_heading=None,node_heading_pairs=node_heading_pairs)
         
+        try:
+            junk_anchor = load_embedding("anchor_vec.npy")
+        except FileNotFoundError:
+            print("[WARN] Junk anchor file not found. Skipping junk pruning.")
+            junk_anchor = None
+
+        #Run the specialized junk filter
+        if junk_anchor is not None:
+            for child in self.children:
+                child.mark_junk_branches(junk_anchor, threshold=0.85)
+
+
+
         for child in self.children: 
             target_heading = node_heading_pairs.get(child)
 

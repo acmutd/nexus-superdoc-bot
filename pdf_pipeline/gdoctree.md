@@ -17,7 +17,7 @@ Returns the length of a string in UTF-16 code units — required for all index c
 
 ```python
 text_utf16_len("Hello")
-text_utf16_len("freaky ah cuh")  
+text_utf16_len("freaky ahh cuh")  
 ```
 
 > **Important:** All index arithmetic in this module uses UTF-16 length, not Python's default `len()`.

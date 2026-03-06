@@ -135,7 +135,7 @@ class GdocTreeNode():
         text_len = len(text.encode("utf-16-le")) // 2
 
         # HEADING_1, HEADING_2, etc.
-        heading_type = f"HEADING_{min(level + 1, 6)}"
+        heading_type = f"HEADING_{min(level + 2, 6)}"
 
         text_requests = [{'insertText': {'location': {'index': index}, 'text': text}}]
         format_requests = [{
@@ -148,12 +148,15 @@ class GdocTreeNode():
         return text_requests, format_requests, text_len
 
     def _format_paragraph_as_leaf(self, index: int, level: int, context: dict) -> tuple[list[dict], list[dict], int]:
-        # 1. Clean the content - strip to prevent double-spacing
+        #Clean the content - strip to prevent double-spacing
         raw_content = self._extract_clean_text(self).strip()
         if not raw_content:
             return [], [], 0
     
-        final_text = f"{raw_content}\n\n"
+        is_list = context.get("list_mode") is not None
+        
+        
+        final_text = f"{raw_content}\n" if is_list else f"{raw_content}\n\n"
         # Calculate length using UTF-16 (Google Docs requirement)
         text_len = len(final_text.encode("utf-16-le")) // 2
         
@@ -165,9 +168,9 @@ class GdocTreeNode():
         }]
     
         format_requests = []
-        is_list = context.get("list_mode") is not None
-    
-        # 2. Define Indentation Math (Standard: 18pt or 36pt per level)
+        
+        
+        # Define Indentation Math (Standard: 18pt or 36pt per level)
         # bullet_offset: Where the bullet or the first character sits
         # text_offset: Where the actual block of text aligns
         bullet_offset = level * 36
@@ -186,7 +189,7 @@ class GdocTreeNode():
             # to start at the same indented position (unlike a bullet)
             bullet_offset = text_offset 
     
-        # 3. Apply the Paragraph Style (The "Alignment Fix")
+        # Apply the Paragraph Style (The "Alignment Fix")
         format_requests.append({
             'updateParagraphStyle': {
                 'paragraphStyle': {

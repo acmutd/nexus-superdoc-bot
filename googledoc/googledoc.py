@@ -223,15 +223,25 @@ class GoogleDocsEditor(GoogleDocsAPI):
             }
         },
         {
-                'updateTextStyle': {
-                    'textStyle': {'bold': True},
-                    'range': {
-                        'startIndex': startIndex,
-                        'endIndex': endIndex
-                    },
-                    'fields': 'bold'
-                }
+            'updateParagraphStyle': {
+                'paragraphStyle': {'namedStyleType': 'HEADING_2'},
+                'range': {
+                    'startIndex': startIndex,
+                    'endIndex': endIndex
+                },
+                'fields': 'namedStyleType'
             }
+        },
+        {
+            'updateTextStyle': {
+                'textStyle': {'bold': True},
+                'range': {
+                    'startIndex': startIndex,
+                    'endIndex': endIndex
+                },
+                'fields': 'bold'
+            }
+        }
     ]
         self.batch_update(requests=requests)
         return (startIndex,endIndex)
@@ -418,10 +428,13 @@ class GoogleDocsEditor(GoogleDocsAPI):
         print(f"Connecting to Google Doc: {superdoc_id}")
         self.get_document_structure(document_id=superdoc_id) # Set the active document
 
-        headings = [node.content for node in all_cust_nodes] 
+        headings = [node.content for node in all_cust_nodes]
+        headings.reverse()
+        print(f"RECIEVED HEADINGS:{headings}") 
         self.create_headings(headings)
         self.get_document_structure(document_id=superdoc_id)
         ranges = [self.find_named_range(heading) for heading in headings] 
+        ranges.reverse()
         print(f"Ranges: {ranges}")
         # Before converting to Gdoc
         for i, node in enumerate(all_cust_nodes):
