@@ -17,7 +17,7 @@ import pymupdf
 from pdf_pipeline.etree import EmbedTreeNode 
 from pdf_pipeline.gdoctree import GdocTreeNode
 from googledoc.googledoc import GoogleDocsEditor
-
+from lexical.lexical_algs import extract_text_similarity_jaccard
 from dotenv import load_dotenv
 import os
 import time
@@ -26,7 +26,57 @@ load_dotenv(os.path.join(os.environ.get('LAMBDA_TASK_ROOT', ''), '.env'))
 
 
 class superdoc():
-    
+    def lexical_redundancyCheck(self, nodes: list, heading: str):
+        print(f"\n[DEBUG] Starting Check for {len(nodes)} nodes under '{heading}'")
+        
+        pruned_tree = []
+        LEXICAL_CHECK_CONSTANT = 0.7
+
+        raw_doc_text = self.docs_editor.get_text_in_range_from_doc_obj(heading)
+        existing_lines = [line.strip() for line in (raw_doc_text or "").split("\n") if line.strip()]
+        print(f"  [CACHE] {len(existing_lines)} lines in GDoc under '{heading}'")
+
+        for i, node in enumerate(nodes):
+            node_text = self._extract_leaf_text(node)  # ← clean text from content attr
+
+            if not node_text:
+                print(f"  [NODE {i}] SKIP: No text found.")
+                pruned_tree.append(node)
+                continue
+
+            is_redundant = False
+            highest_score = 0
+
+            for line in existing_lines:
+                score = extract_text_similarity_jaccard(node_text, line)
+                if score > highest_score:
+                    highest_score = score
+                if score >= LEXICAL_CHECK_CONSTANT:
+                    is_redundant = True
+                    break
+
+            if not is_redundant:
+                pruned_tree.append(node)
+                print(f"  [KEEP]  '{node_text[:60]}' (max sim: {highest_score:.2f})")
+            else:
+                print(f"  [PRUNE] '{node_text[:60]}' (score: {highest_score:.2f})")
+
+        print(f"[DEBUG] Done. Kept {len(pruned_tree)}/{len(nodes)}\n")
+        return pruned_tree
+
+
+    def _extract_leaf_text(self, node) -> str:
+        """Walk down the tree until we find a node with actual content."""
+        content = node.content.strip() if node.content else ""
+        if content:
+            return content
+        for child in node.children:
+            result = self._extract_leaf_text(child)
+            if result:
+                return result
+        return ""
+
+
     #Clean up init
     def __init__(self,DOCUMENT_ID:str|None,COURSE_ID:str,index_name='sdtest1'):
         self.DOCUMENT_ID = DOCUMENT_ID
@@ -87,6 +137,24 @@ class superdoc():
         # all_cust_nodes: Total set of custom nodes (existing + new) to be rendered
         new_cust_nodes, all_cust_nodes = root.reconcile_structure(headings=existing_headings)
         
+        #Lexical Redundnacy check
+        if all_cust_nodes:
+            print("Running Lexical Redundancy Check on Tree Branches...")
+            self.docs_editor.get_document_structure(document_id=self.DOCUMENT_ID)  # <-- fresh doc obj
+            
+            for branch in all_cust_nodes:
+                if hasattr(branch, 'children') and branch.children:
+                    heading_text = getattr(branch, 'content', '').strip()
+                    print(f"Checking {len(branch.children)} nodes under: '{heading_text}'")
+                    branch.children = self.lexical_redundancyCheck(
+                        nodes=branch.children,
+                        heading=heading_text  # <-- pass heading explicitly
+                    )
+            
+            # Remove branches that are now empty after pruning
+            all_cust_nodes = [b for b in all_cust_nodes if len(getattr(b, 'children', [])) > 0]
+
+
         # 5. Sync new structural nodes to Vector DB
         # We only append the NEWLY generated headings so we don't duplicate existing ones
         if new_cust_nodes:

@@ -141,3 +141,34 @@ def create_new_document(req: CreateDocRequest):
 
 # Lambda Handler
 handler = Mangum(app, lifespan="off", api_gateway_base_path="/dev")
+
+if __name__ == "__main__":
+    import json
+    from io import BytesIO
+    # We already have 'superdoc' imported at the top of the file
+  
+    # 1. Configuration for DIRECT test (Bypassing API)
+    MY_DOC_ID = '13OiEdtje4wMZGT1LEfVmj3RmAeR1BchUF6eZBaICH8w'
+    MY_COURSE_ID = "RHET1302"
+    LOCAL_PDF_PATH = "/Users/tharunsevvel/Downloads/Chloroplasts.pdf"
+
+
+    print(f"\n--- TRIGGERING DIRECT METHOD CALL ---")
+    sd = superdoc(DOCUMENT_ID=MY_DOC_ID, COURSE_ID=MY_COURSE_ID)
+
+
+    if os.path.exists(LOCAL_PDF_PATH):
+        with open(LOCAL_PDF_PATH, "rb") as f:
+            pdf_bytes = f.read()
+        strm = BytesIO(pdf_bytes)
+
+
+        print("Starting Hierarchical Merge...")
+        # We wrap this in a try/except to catch that Pinecone/List error
+        try:
+            sd.merge_pdf_hierarchical(stream=strm)
+            print("Done! Check your Google Doc.")
+        except Exception as e:
+            print(f"Merge failed: {e}")
+            print("Check if reconcile_structure is returning None instead of a list.")
+
