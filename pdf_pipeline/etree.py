@@ -287,26 +287,6 @@ class EmbedTreeNode():
 
 
 
-    def remove_different_heading_child_branches(self,parent_heading:str,node_heading_pairs:dict[Self,str]):
-        current_match = node_heading_pairs.get(self)
-    
-        if current_match:
-            active_heading = current_match
-            self.is_custom_node = False # It's a verified match, no longer 'custom'
-        else:
-            # If no match, inherit the heading from above
-            active_heading = parent_heading
-        
-        for child in list(self.children): #iterate over a copy of self.children, don't have to deal w/index shifts 
-            matched_heading = node_heading_pairs.get(child)
-            if matched_heading: 
-                if not (parent_heading == matched_heading): 
-                    child.is_pruned = True
-                    type(self).remove_branch(child)
-                    continue
-                else: 
-                    child.is_custom_node = False
-            child.remove_different_heading_child_branches(parent_heading=parent_heading,node_heading_pairs=node_heading_pairs)
 
     def mark_junk_branches(self, junk_anchor_vec: np.ndarray, threshold: float = 0.85):
         """
@@ -350,6 +330,7 @@ class EmbedTreeNode():
                 # We don't recurse into pruned branches
             else:
                 # Continue checking deeper
+                child.is_custom_node = False
                 child.mark_structural_mismatch(target_heading, node_heading_pairs)
 
     def mark_semantic_mismatch(self, anchor_vector: np.ndarray, threshold: float = 0.8):
@@ -373,6 +354,7 @@ class EmbedTreeNode():
             if not is_relevant:
                 child.is_pruned = True
             else:
+                child.is_custom_node = False
                 child.mark_semantic_mismatch(anchor_vector, threshold)
 
 
@@ -484,12 +466,7 @@ class EmbedTreeNode():
             cus_node.has_custom_node = True
             cus_node.children = batch
 
-
-            for node in batch: 
-                node.parent = cus_node
-
             type(self)._insert_batch_before(cus_node)
-
             batch_nodes.append(cus_node)
 
 
@@ -504,17 +481,6 @@ class EmbedTreeNode():
         node_heading_pairs = self.match_headings(db_headings=headings)
         #self.remove_different_heading_child_branches(parent_heading=None,node_heading_pairs=node_heading_pairs)
         
-        try:
-            junk_anchor = load_embedding("anchor_vec.npy")
-        except FileNotFoundError:
-            print("[WARN] Junk anchor file not found. Skipping junk pruning.")
-            junk_anchor = None
-
-        #Run the specialized junk filter
-        if junk_anchor is not None:
-            for child in self.children:
-                child.mark_junk_branches(junk_anchor, threshold=0.85)
-
 
 
         for child in self.children: 
@@ -525,10 +491,12 @@ class EmbedTreeNode():
             if child.is_custom_node and child.emb is not None: 
                 child.mark_semantic_mismatch(anchor_vector=child.emb)
 
-            child.is_custom_node = True
+            #child.is_custom_node = True
         print(self)
 
         pruned_nodes = list(self.execute_pruning())
+        
+
         
         print(f"\n\n{"INSANITY"}\n\n")
 

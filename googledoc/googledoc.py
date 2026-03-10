@@ -525,31 +525,6 @@ class GoogleDocsEditor(GoogleDocsAPI):
         self.batch_update(batch_all_requests)
         print(f"FINISHED BATCH UPDATE")
 
-def insert_text_ex(): 
-     # Initialize the editorpinecone_api_key = os.environ.get("PINECONE_API_KEY")
-    pinecone_api_key = os.environ.get("PINECONE_API_KEY")
-    print(f"Start of VectorDBManager init")
-    db = VectorDBManager(pc=Pinecone(pinecone_api_key))
-    db.initVectorStore(index_name="sdtest1", embedding=OpenAIEmbeddings(api_key=os.getenv("OPENAI_API_KEY")))
-    print(f"Start of pdf conversion")
-    self = GoogleDocsEditor()
-    drive_activity = GoogleDriveActivity()
-    
-    converter = DocumentConverter()
-    doc = converter.convert("./files/ResearchPaperTurnIn.pdf").document 
-    chunker = DocSemChunker() 
-    print("Starting chuking")
-    chunk_iter = list(chunker.chunk(dl_doc=doc,doc_name="rpaper"))
-    # Your Google Docs document ID (om the URL)
-    chunk_iter = db.modify_doc_heading(documents=chunk_iter,superdoc_id="rpaper",course_id="RHET1302")
-    DOCUMENT_ID = '1zjQClSEUE587kPrupY5fplFtUcB3OGEj5mKhplmiFxM'
-    
-    # Example 1: Append to the very end
-    self.get_document_structure(document_id=DOCUMENT_ID)
-   # print(f"Doc structure:{self.doc}")
-    #print(self.find_insertion_point("stuff"))
-    #print("Appending to end of document...")
-    self.insert_text(document_id=DOCUMENT_ID, chunk_docs=chunk_iter)
        
 def test_render_to_gdoc():
     # 1. Setup Data and Paths
