@@ -48,7 +48,7 @@ async def log_requests(request, call_next):
 
 @app.get("/health")
 def health_check():
-    return {"status": "howdy"}
+    return {"status": "charlie charlie kirky"}
 
 @app.post("/merge_pdf")
 def handle_merge_pdf(req: MergePDFRequest):
