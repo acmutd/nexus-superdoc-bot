@@ -1,5 +1,3 @@
-
-app = FastAPI()
 import os
 import urllib.request
 from io import BytesIO
