@@ -1,11 +1,3 @@
-import os
-import urllib.request
-from io import BytesIO
-from fastapi import FastAPI, HTTPException, Body
-from mangum import Mangum
-from pydantic import BaseModel
-
-from superdoc.superdoc import superdoc
 
 app = FastAPI()
 import os
@@ -58,7 +50,7 @@ async def log_requests(request, call_next):
 
 @app.get("/health")
 def health_check():
-    return {"status": "healthy"}
+    return {"status": "howdy"}
 
 @app.post("/merge_pdf")
 def handle_merge_pdf(req: MergePDFRequest):

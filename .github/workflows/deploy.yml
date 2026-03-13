@@ -1,0 +1,49 @@
+name: Deploy to AWS Lambda
+
+on:
+  push:
+    branches: [ "main" ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Create token.json and .env
+        run: |
+          echo "${{ secrets.GOOGLE_TOKEN }}" > token.json 
+          echo "${{ secrets.OPENAI_AND_PINECONE}}" > .env
+
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-2
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and Push Image
+        id: build-image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          provenance: false
+          tags: |
+            ${{ steps.login-ecr.outputs.registry }}/nexus-superdoc:${{ github.sha }}
+            ${{ steps.login-ecr.outputs.registry }}/nexus-superdoc:latest
+
+      - name: Update Lambda Function
+        run: |
+          aws lambda update-function-code \
+            --function-name nexus-superdoc \
+            --image-uri ${{ steps.login-ecr.outputs.registry }}/nexus-superdoc:${{ github.sha }}
