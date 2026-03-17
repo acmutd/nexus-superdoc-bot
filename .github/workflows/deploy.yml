@@ -53,4 +53,3 @@ jobs:
           aws lambda update-function-code \
             --function-name nexus-superdoc \
             --image-uri ${{ steps.login-ecr.outputs.registry }}/nexus-superdoc:${{ github.sha }}
-            --publish
