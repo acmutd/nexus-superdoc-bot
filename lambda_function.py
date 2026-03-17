@@ -125,13 +125,18 @@ def create_new_document(req: CreateDocRequest):
 
     try:
         # Note: Using the standalone create_document method in the class
+
         sd = superdoc(DOCUMENT_ID="DUMMY", COURSE_ID=req.courseId)
+        print("superdoc class initalized")
         doc_map = sd.get_docids(course_id=req.courseId)
+        print("doc map retrieved")
         if doc_map.get(req.documentName,None):
             raise HTTPException(status_code=400, detail=f"A superdoc with the name {req.documentName} already exists!")
+        print("same name check completed")
         response = sd.create_document(name=req.documentName, course_id=req.courseId)
-
-        return {"status": "created", "document": response}
+        docId = response.get('documentId')
+        print("response retrieved")
+        return {"status": "created", "document": docId}
     except Exception as e:
         print(traceback.format_exc()) 
         raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {str(e)}")

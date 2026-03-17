@@ -13,8 +13,12 @@ jobs:
 
       - name: Create token.json and .env
         run: |
-          echo "${{ secrets.GOOGLE_TOKEN }}" > token.json 
-          echo "${{ secrets.OPENAI_AND_PINECONE}}" > .env
+          cat <<EOF > token.json
+          ${{ secrets.GOOGLE_TOKEN }}
+          EOF
+          cat <<EOF > .env
+          ${{ secrets.OPENAI_AND_PINECONE }}
+          EOF
 
 
       - name: Configure AWS Credentials
