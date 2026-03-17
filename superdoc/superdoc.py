@@ -28,7 +28,7 @@ load_dotenv(os.path.join(os.environ.get('LAMBDA_TASK_ROOT', ''), '.env'))
 class superdoc():
     
     #Clean up init
-    def __init__(self,DOCUMENT_ID:str|None,COURSE_ID:str,index_name='sdtest1'):
+    def __init__(self,DOCUMENT_ID:str|None,COURSE_ID:str,index_name=os.getenv("PINECONE_INDEX", "superdoc-headings")):
         self.DOCUMENT_ID = DOCUMENT_ID
         self.COURSE_ID = COURSE_ID
         self.docs_editor = GoogleDocsEditor()
