@@ -12,7 +12,7 @@ def test():
 
 
 dynamodb = boto3.resource('dynamodb')
-TABLE_NAME = 'NEXUS-superdoc-id-store'#'docidstore'
+TABLE_NAME = 'NEXUS-superdoc-id-store'#docidstore'
 table = dynamodb.Table(TABLE_NAME)
 
 def save_course_docs(courseId, doc_ids):

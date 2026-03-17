@@ -158,7 +158,8 @@ if __name__ == '__main__':
     strm = BytesIO(pdf_bytes)
 
     sd = superdoc(DOCUMENT_ID='13OiEdtje4wMZGT1LEfVmj3RmAeR1BchUF6eZBaICH8w',COURSE_ID="RHET1302")
-    sd.merge_pdf_hierarchical(stream=strm)
+    #sd.merge_pdf_hierarchical(stream=strm)
+    sd.create_document(name="Hellow",course_id="RHET1302")
     #sd.merge_pdf()
    # sd.update_heading(old_heading="Introduction",new_heading="GoofyGoober")
     #sd.create_heading(new_heading="Trump giving Kirk to Bubba")

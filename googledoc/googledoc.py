@@ -40,7 +40,7 @@ class GoogleDocsAPI:
         if os.path.exists(self.token_file):
             creds = Credentials.from_authorized_user_file(self.token_file)
         
-        print(creds.valid)
+       
         # If there are no (valid) credentials available, let the user log in.
         if not creds or not creds.valid:
             if creds and creds.expired and creds.refresh_token:
@@ -57,7 +57,8 @@ class GoogleDocsAPI:
             # Save the credentials for the next run
             with open(self.token_file, 'w') as token:
                 token.write(creds.to_json())
-        
+                
+        print(f"Credentials valid: {creds.valid}")
         return (build('docs', 'v1', credentials=creds),build('drive', 'v3', credentials=creds))
         
 '''
