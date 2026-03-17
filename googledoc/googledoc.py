@@ -33,33 +33,41 @@ class GoogleDocsAPI:
     
     def authenticate(self):
         """Authenticate and build the Google Docs service"""
-        
-        # If you have OAuth 2.0 credentials
+        """Authenticate and build the Google Docs and Drive services in a read-only environment"""
+    
         creds = None
-        # The file token.json stores the user's access and refresh tokens.
-        if os.path.exists(self.token_file):
-            creds = Credentials.from_authorized_user_file(self.token_file)
         
-       
-        # If there are no (valid) credentials available, let the user log in.
+        if os.path.exists(self.token_file):
+            # 1. Read the file into memory first
+            with open(self.token_file, 'r') as f:
+                token_data = json.load(f)
+            
+            # 2. Use 'from_authorized_user_info' to prevent the library 
+            # from trying to manage (and write to) the file on disk.
+            creds = Credentials.from_authorized_user_info(token_data, SCOPES)
+        
+        # 3. Handle token refresh
         if not creds or not creds.valid:
             if creds and creds.expired and creds.refresh_token:
-                creds.refresh(Request())
+                print("Refreshing expired Google token in memory...")
+                try:
+                    # This refreshes the 'creds' object but DOES NOT save to disk
+                    creds.refresh(Request())
+                except Exception as e:
+                    print(f"Failed to refresh token: {e}")
+                    raise Exception("Google Refresh Token is invalid or revoked.")
             else:
-                # You'll need to set up OAuth 2.0 credentials
-                # See: https://developers.google.com/docs/api/quickstart/python
-                flow = InstalledAppFlow.from_client_secrets_file(
-                    self.credentials_file, 
-                    scopes=SCOPES
-                )
-                creds = flow.run_local_server(port=0)
-            
-            # Save the credentials for the next run
-            with open(self.token_file, 'w') as token:
-                token.write(creds.to_json())
-                
+                # In Lambda, we cannot run flow.run_local_server(). 
+                # If we reach this block, it means token.json is missing or totally invalid.
+                raise FileNotFoundError("Valid token.json not found. Please generate it locally first.")
+    
         print(f"Credentials valid: {creds.valid}")
-        return (build('docs', 'v1', credentials=creds),build('drive', 'v3', credentials=creds))
+        
+        # Build services
+        docs_service = build('docs', 'v1', credentials=creds)
+        drive_service = build('drive', 'v3', credentials=creds)
+        
+        return (docs_service, drive_service)
         
 '''
 class GoogleDocsAPI:
