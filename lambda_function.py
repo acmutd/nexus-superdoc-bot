@@ -7,6 +7,38 @@ from mangum import Mangum
 from pydantic import BaseModel
 
 
+def debug_file_status():
+    print("--- PRE-FLIGHT FILE CHECK ---")
+    files_to_check = ["token.json", ".env"]
+    
+    for filename in files_to_check:
+        path = pathlib.Path(filename)
+        if path.exists():
+            size = path.stat().st_size
+            print(f"FILE FOUND: {filename} ({size} bytes)")
+            
+            if size > 0:
+                try:
+                    with open(filename, 'r') as f:
+                        content = f.read()
+                        # Verify if it's valid JSON (for token.json)
+                        if filename == "token.json":
+                            json.loads(content)
+                            print(f"VALIDATION: {filename} is VALID JSON.")
+                        # Check first few chars of .env without leaking secrets
+                        if filename == ".env":
+                            print(f"VALIDATION: .env starts with: {content[:10]}...")
+                except Exception as e:
+                    print(f"VALIDATION FAILED for {filename}: {str(e)}")
+            else:
+                print(f"WARNING: {filename} IS EMPTY (0 bytes)!")
+        else:
+            print(f"ERROR: {filename} NOT FOUND in {os.getcwd()}")
+    print("--- END CHECK ---")
+
+
+debug_file_status()
+
 app = FastAPI(title="SuperDoc API")
 PINECONE_INDEX = os.getenv("PINECONE_INDEX", "superdoc-headings")
 STAGE_PATH = os.getenv("STAGE_PATH", "/prod")
