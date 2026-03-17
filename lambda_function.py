@@ -8,27 +8,28 @@ from pydantic import BaseModel
 
 
 app = FastAPI(title="SuperDoc API")
-
+PINECONE_INDEX = os.getenv("PINECONE_INDEX", "superdoc-headings")
+STAGE_PATH = os.getenv("STAGE_PATH", "/prod")
 # --- Request Models ---
 
 class MergePDFRequest(BaseModel):
     pdfUrl: str
     courseId: str
     documentId: Optional[str] = None
-    index_name: str = "sdtest1"
+    index_name: str = PINECONE_INDEX
 
 class HeadingOperation(BaseModel):
     courseId: str
     documentId: str
     heading: str  # Used for create/delete
-    index_name: str = "sdtest1"
+    index_name: str = PINECONE_INDEX
 
 class UpdateHeadingRequest(BaseModel):
     courseId: str
     documentId: str
     oldHeading: str
     newHeading: str
-    index_name: str = "sdtest1"
+    index_name: str = PINECONE_INDEX
 
 class CreateDocRequest(BaseModel):
     courseId: str
@@ -120,8 +121,8 @@ def create_new_document(req: CreateDocRequest):
     try:
         # Note: Using the standalone create_document method in the class
         sd = superdoc(DOCUMENT_ID="DUMMY", COURSE_ID=req.courseId)
-        doc_map = sd.get_docids(course_id=course_id)
-        if doc_map.get(course_id,None):
+        doc_map = sd.get_docids(course_id=req.courseId)
+        if doc_map.get(req.documentName,None):
             raise HTTPException(status_code=400, detail=f"A superdoc with the name {req.documentName} already exists!")
         response = sd.create_document(name=req.documentName, course_id=req.courseId)
 
@@ -130,4 +131,4 @@ def create_new_document(req: CreateDocRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 # Lambda Handler
-handler = Mangum(app, lifespan="off", api_gateway_base_path="/dev")
+handler = Mangum(app, lifespan="off", api_gateway_base_path=STAGE_PATH)
