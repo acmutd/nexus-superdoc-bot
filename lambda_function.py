@@ -5,6 +5,8 @@ from typing import Optional, List
 from fastapi import FastAPI, HTTPException, Body
 from mangum import Mangum
 from pydantic import BaseModel
+import pathlib
+import json
 
 
 def debug_file_status():
