@@ -67,7 +67,8 @@ def handle_merge_pdf(req: MergePDFRequest):
         
         return {"status": "success", "documentId": sd.DOCUMENT_ID}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        print(traceback.format_exc()) 
+        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {str(e)}")
 
 @app.post("/headings/create")
 def create_heading(req: HeadingOperation):
@@ -78,7 +79,8 @@ def create_heading(req: HeadingOperation):
         sd.create_heading(new_heading=req.heading)
         return {"status": "heading created", "documentId": req.documentId}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        print(traceback.format_exc()) 
+        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {str(e)}")
 
 @app.delete("/headings/delete")
 def delete_heading(req: HeadingOperation):
@@ -89,7 +91,8 @@ def delete_heading(req: HeadingOperation):
         sd.delete_heading(old_heading=req.heading)
         return {"status": "heading deleted", "documentId": req.documentId}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        print(traceback.format_exc()) 
+        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {str(e)}")
 
 @app.put("/headings/update")
 def update_heading(req: UpdateHeadingRequest):
@@ -100,7 +103,8 @@ def update_heading(req: UpdateHeadingRequest):
         sd.update_heading(old_heading=req.oldHeading, new_heading=req.newHeading)
         return {"status": "heading updated", "documentId": req.documentId}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        print(traceback.format_exc()) 
+        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {str(e)}")
 
 @app.get("/documents/{course_id}")
 def get_course_documents(course_id: str):
@@ -112,7 +116,8 @@ def get_course_documents(course_id: str):
         ids = sd.get_docids(course_id=course_id)
         return {"courseId": course_id, "documentIds": ids}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        print(traceback.format_exc()) 
+        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {str(e)}")
 
 @app.post("/documents/create")
 def create_new_document(req: CreateDocRequest):
@@ -128,7 +133,8 @@ def create_new_document(req: CreateDocRequest):
 
         return {"status": "created", "document": response}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        print(traceback.format_exc()) 
+        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {str(e)}")
 
 # Lambda Handler
 handler = Mangum(app, lifespan="off", api_gateway_base_path=STAGE_PATH)
