@@ -26,57 +26,6 @@ load_dotenv(os.path.join(os.environ.get('LAMBDA_TASK_ROOT', ''), '.env'))
 
 
 class superdoc():
-    def lexical_redundancyCheck(self, nodes: list, heading: str):
-        print(f"\n[DEBUG] Starting Check for {len(nodes)} nodes under '{heading}'")
-        
-        pruned_tree = []
-        LEXICAL_CHECK_CONSTANT = 0.7
-
-        raw_doc_text = self.docs_editor.get_text_in_range_from_doc_obj(heading)
-        existing_lines = [line.strip() for line in (raw_doc_text or "").split("\n") if line.strip()]
-        print(f"  [CACHE] {len(existing_lines)} lines in GDoc under '{heading}'")
-
-        for i, node in enumerate(nodes):
-            node_text = self._extract_leaf_text(node)  # ← clean text from content attr
-
-            if not node_text:
-                print(f"  [NODE {i}] SKIP: No text found.")
-                pruned_tree.append(node)
-                continue
-
-            is_redundant = False
-            highest_score = 0
-
-            for line in existing_lines:
-                score = extract_text_similarity_jaccard(node_text, line)
-                if score > highest_score:
-                    highest_score = score
-                if score >= LEXICAL_CHECK_CONSTANT:
-                    is_redundant = True
-                    break
-
-            if not is_redundant:
-                pruned_tree.append(node)
-                print(f"  [KEEP]  '{node_text[:60]}' (max sim: {highest_score:.2f})")
-            else:
-                print(f"  [PRUNE] '{node_text[:60]}' (score: {highest_score:.2f})")
-
-        print(f"[DEBUG] Done. Kept {len(pruned_tree)}/{len(nodes)}\n")
-        return pruned_tree
-
-
-    def _extract_leaf_text(self, node) -> str:
-        """Walk down the tree until we find a node with actual content."""
-        content = node.content.strip() if node.content else ""
-        if content:
-            return content
-        for child in node.children:
-            result = self._extract_leaf_text(child)
-            if result:
-                return result
-        return ""
-
-
     #Clean up init
     def __init__(self,DOCUMENT_ID:str|None,COURSE_ID:str,index_name='sdtest1'):
         self.DOCUMENT_ID = DOCUMENT_ID
@@ -99,7 +48,8 @@ class superdoc():
         md = mdit.parse(markdown)
         return SyntaxTreeNode(md)
     
-    def stree_to_etree(self,stree:SyntaxTreeNode):
+    @staticmethod
+    def stree_to_etree(self,stree:SyntaxTreeNode) -> EmbedTreeNode:
         print("Building Semantic Tree...")
         root = EmbedTreeNode._init_tree(root_node=stree, emb_model=self.emb_model)
         EmbedTreeNode._embed_tree_(root)
@@ -107,7 +57,11 @@ class superdoc():
         return root
 
         
+    '''
+    
+        Main merging algorithm
 
+    '''
 
     def merge_pdf_hierarchical(self, stream: BytesIO):
         """
@@ -180,7 +134,13 @@ class superdoc():
         end_time = time.perf_counter()
         print(f"Total Merge Process completed in: {(end_time - start_time):.2f}s")
         print(f"Google Doc Render took: {(end_time - render_start):.2f}s")
-   
+
+    '''
+    
+        Heading management
+    
+    '''
+
     def delete_heading(self,old_heading:str): 
         self.docs_editor.delete_heading(old_heading=old_heading)
         self.db.remove_vectordb_heading(heading=old_heading,course_id=self.COURSE_ID,superdoc_id=self.DOCUMENT_ID)
@@ -197,6 +157,8 @@ class superdoc():
 
     def create_document(self,name:str,course_id): 
         return self.docs_editor.create_google_doc(name=name,courseid=course_id)
+
+
 
     def get_docids(self, course_id: str) -> dict: 
         # 1. Get the list of document IDs (assuming this returns a list)
@@ -217,8 +179,63 @@ class superdoc():
             docs_map[doc_name] = docid
             
         return docs_map
-            
     
+
+    '''
+
+        Lexical Redundancy
+
+    '''
+    
+    def lexical_redundancyCheck(self, nodes: list, heading: str):
+        print(f"\n[DEBUG] Starting Check for {len(nodes)} nodes under '{heading}'")
+        
+        pruned_tree = []
+        LEXICAL_CHECK_CONSTANT = 0.7
+
+        raw_doc_text = self.docs_editor.get_text_in_range_from_doc_obj(heading)
+        existing_lines = [line.strip() for line in (raw_doc_text or "").split("\n") if line.strip()]
+        print(f"  [CACHE] {len(existing_lines)} lines in GDoc under '{heading}'")
+
+        for i, node in enumerate(nodes):
+            node_text = self._extract_leaf_text(node)  # ← clean text from content attr
+
+            if not node_text:
+                print(f"  [NODE {i}] SKIP: No text found.")
+                pruned_tree.append(node)
+                continue
+
+            is_redundant = False
+            highest_score = 0
+
+            for line in existing_lines:
+                score = extract_text_similarity_jaccard(node_text, line)
+                if score > highest_score:
+                    highest_score = score
+                if score >= LEXICAL_CHECK_CONSTANT:
+                    is_redundant = True
+                    break
+
+            if not is_redundant:
+                pruned_tree.append(node)
+                print(f"  [KEEP]  '{node_text[:60]}' (max sim: {highest_score:.2f})")
+            else:
+                print(f"  [PRUNE] '{node_text[:60]}' (score: {highest_score:.2f})")
+
+        print(f"[DEBUG] Done. Kept {len(pruned_tree)}/{len(nodes)}\n")
+        return pruned_tree
+
+
+    def _extract_leaf_text(self, node) -> str:
+        """Walk down the tree until we find a node with actual content."""
+        content = node.content.strip() if node.content else ""
+        if content:
+            return content
+        for child in node.children:
+            result = self._extract_leaf_text(child)
+            if result:
+                return result
+        return ""
     
 if __name__ == '__main__': 
     with open("files/Chloroplasts 1.pdf", "rb") as f:
