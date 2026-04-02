@@ -28,9 +28,15 @@ import traceback
 MIN_BLOCK_LEN = 20
 SIMILARITY_THRESHOLD=0.97
 
-class EmbedTreeNode(): 
+class EmbedTreeNode():
+    """
+    A semantic wrapper for SyntaxTreeNodes that stores embeddings, and 
+    handles the "merging" logic between the Vectordb headings and pdf-document headings and content 
+    """
     def __init__(self,node:SyntaxTreeNode,emb_model:OpenAIEmbeddings,parent,is_custom:bool=False):
-        
+        """
+        Initializes a node with its core metadata, word count, and hierarchical links.
+        """
         self.node:SyntaxTreeNode = node
         self.type:str = self.node.type 
         self.emb_model:OpenAIEmbeddings = emb_model
@@ -56,6 +62,12 @@ class EmbedTreeNode():
 
     @classmethod
     def _init_tree(cls, root_node: SyntaxTreeNode, emb_model: OpenAIEmbeddings) -> 'EmbedTreeNode':
+        """
+        Builds the hierarchical EmbedTree from a flat SyntaxTree. 
+        It uses a stack-based approach to ensure that 'h2' nodes become children of 'h1' nodes, 
+        paragraphs become children of the preceding heading, etc.
+        """
+        
         # 1. Create the actual Root wrapper
         root_wrapper = cls(node=root_node, emb_model=emb_model, parent=None)
 
@@ -97,7 +109,10 @@ class EmbedTreeNode():
 
     @classmethod
     def _extract_text_recursive(cls, node: SyntaxTreeNode) -> str:
-        """Gathers text only from leaf nodes to avoid duplication."""
+        """
+        Traverses down to leaf nodes to collect text content without 
+        including the markdown formatting/markup found in container nodes.
+        """
         # If it's a leaf node with content, that's our raw text
         if not node.children:
             return node.content if node.content else ""
@@ -108,13 +123,21 @@ class EmbedTreeNode():
 
     @classmethod
     def _build_internal_children(cls, node, wrapper, emb_model):
+        """
+        Standard recursive builder for deep internal children (bold, italics, spans)
+        that doesn't involve heading-level logic.
+        """
         for child in node.children:
             e_child = cls(node=child, emb_model=emb_model, parent=wrapper)
             wrapper.children.append(e_child)
             cls._build_internal_children(child, e_child, emb_model)    
     
     @classmethod 
-    def _calc_block_len(cls,node): 
+    def _calc_block_len(cls,node):
+        """
+        Aggregates the word counts from the bottom up. 
+        A heading's block_len will eventually represent the sum of all text under it.
+        """ 
         etree:cls = node 
         for child in etree.children: 
             cls._calc_block_len(child)
@@ -123,7 +146,12 @@ class EmbedTreeNode():
 
 
     @classmethod
-    def _calc_mean_embedding(cls, node): 
+    def _calc_mean_embedding(cls, node):
+        """
+        Calculates a 'Semantic Centroid' for each branch. 
+        It averages the embeddings of all children to create a vector 
+        representing the overall meaning of that section.
+        """ 
         for child in node.children: 
            cls._calc_mean_embedding(child)
 
@@ -138,7 +166,11 @@ class EmbedTreeNode():
 
 
     @classmethod     
-    def _embed_tree_(cls,node): 
+    def _embed_tree_(cls,node):
+        """
+        Batches all heading nodes found in the tree and sends them to OpenAI 
+        to generate their vector embeddings in a single efficient call.
+        """ 
         heading_nodes = [n for n in node.apply(lambda x: x) if n.type == 'heading']
         
         if not heading_nodes:
@@ -155,6 +187,10 @@ class EmbedTreeNode():
    
     @classmethod
     def _insert_custom_before(cls,node,custom_node): 
+        """
+        Wraps an existing node in a new custom parent node. 
+        Used to inject new headings into the hierarchy dynamically.
+        """
         if not node.parent or node.type=="root":
             return
         curr = node.parent
@@ -178,6 +214,10 @@ class EmbedTreeNode():
 
     @classmethod 
     def _insert_batch_before(cls,batch_node):
+        """
+        Takes a list of 'straggler' nodes and wraps them all under a single 
+        custom heading node, maintaining their original position in the tree.
+        """
         first_child = batch_node.children[0]
         parent = first_child.parent
         if not parent or first_child.type=='root': 
@@ -195,7 +235,8 @@ class EmbedTreeNode():
         parent.children.insert(idx,batch_node)
 
     @classmethod 
-    def remove_branch(cls,node): 
+    def remove_branch(cls,node):
+        """Detaches a specific branch from the tree, effectively deleting it from the hierarchy.""" 
         if not node.parent or node.type=="root": 
             return  
         parent = node.parent
@@ -248,7 +289,8 @@ class EmbedTreeNode():
 
     '''   
 
-    class DB_Heading(BaseModel): 
+    class DB_Heading(BaseModel):
+        """Schema for headings retrieved from Pinecone/Database.""" 
         id: str 
         heading: Optional[str]
         position: Optional[int]
@@ -257,7 +299,10 @@ class EmbedTreeNode():
 
 
     def match_headings(self,db_headings:list[DB_Heading]) -> dict[Self,str]:
-        
+        """
+        Uses cosine similarity to find the best match between current tree branches 
+        and existing headings in the database. Returns a mapping of nodes to DB heading labels.
+        """
         heading_vecs = np.array([h.embedding for h in db_headings if len(h.embedding) == 1536])
         
         def check_node_against_headings(node)->tuple[str,Self]:
@@ -284,42 +329,12 @@ class EmbedTreeNode():
         }
         return node_heading_pairs
 
-
-
-
-
-    def mark_junk_branches(self, junk_anchor_vec: np.ndarray, threshold: float = 0.85):
-        """
-        Identify and mark branches that match the 'Junk' profile (TOC, Citations, etc.)
-        """
-        if junk_anchor_vec is None:
-            return
-
-        for child in self.children:
-            is_junk = False
-            if child.mean_emb is not None:
-                # Calculate Cosine Similarity
-                norm_anchor = np.linalg.norm(junk_anchor_vec)
-                norm_child = np.linalg.norm(child.mean_emb)
-
-                if norm_anchor > 0 and norm_child > 0:
-                    similarity = np.dot(junk_anchor_vec, child.mean_emb) / (norm_anchor * norm_child)
-                    
-                    # If similarity to the "Junk Anchor" is HIGH, mark for pruning
-                    if similarity > threshold:
-                        print(f"[PRUNE] Junk branch detected: {child.content[:50]} (Sim: {similarity:.4f})")
-                        is_junk = True
-
-            if is_junk:
-                child.is_pruned = True
-            else:
-                # Only recurse if this node isn't already junk
-                child.mark_junk_branches(junk_anchor_vec, threshold)    
     
     
     def mark_structural_mismatch(self, target_heading: str, node_heading_pairs: dict):
         """
-        Marks nodes that don't match the database heading label.
+        Flags nodes for removal (pruning) if they physically exist under one heading 
+        in the PDF but semantically belong to a completely different heading in the DB.
         """
         for child in self.children:
             matched_heading = node_heading_pairs.get(child)
@@ -335,7 +350,8 @@ class EmbedTreeNode():
 
     def mark_semantic_mismatch(self, anchor_vector: np.ndarray, threshold: float = 0.8):
         """
-        Marks nodes that stray too far from the anchor vector's meaning.
+        Flags nodes for removal if their meaning (embedding) strays too far 
+        from the 'anchor' meaning of the parent heading.
         """
         if anchor_vector is None:
             return
@@ -360,7 +376,8 @@ class EmbedTreeNode():
 
     def execute_pruning(self):
         """
-        Physically removes nodes marked as is_pruned and yields them.
+        Iterates through the tree and removes all nodes flagged as 'is_pruned', 
+        returning them as a list of detached branches for potential re-insertion.
         """
         for child in list(self.children):
             if child.is_pruned:
@@ -377,6 +394,11 @@ class EmbedTreeNode():
 
     @staticmethod
     def find_straggler_branches(node) -> Generator[list['EmbedTreeNode'], None, None]:
+        """
+        Identifies 'orphan' content—text blocks that aren't under a heading 
+        or don't have a clear semantic parent. These are grouped into 'batches' 
+        so the LLM can generate a new heading for them.
+        """
         # 1. Immediate exit for tiny nodes
         if node.block_len < MIN_BLOCK_LEN:
             return 
@@ -434,6 +456,15 @@ class EmbedTreeNode():
 
 
     def reconcile_structure(self,headings:list[DB_Heading]):
+        """
+        The orchestrator of the semantic merge. It:
+        1. Finds stragglers and generates new headings for them via LLM.
+        2. Embeds new headings and calculates mean vectors.
+        3. Matches tree branches to database headings.
+        4. Prunes mismatched content.
+        5. Returns nodes that need to be updated in the DB or Google Doc.
+        """
+        
         mdit = MarkdownIt()
         headings = type(self).rows_to_headings(headings)
 
@@ -530,6 +561,7 @@ class EmbedTreeNode():
 
     def display_custom_headings(self, level: int = 0) -> None:
         """
+        debug helper
         Recursively finds and prints all nodes marked as custom headings.
         """
         # If the current node is a custom node, print it with indentation
@@ -552,6 +584,7 @@ class EmbedTreeNode():
             
 
     def apply(self,func: Callable[["EmbedTreeNode"],Any])->Generator[Any,None,None]:
+        """A visitor-pattern implementation to apply a function across every node in the tree."""
         if self.node.type!="root":
             yield func(self)#yeild the result of the func on current node
         for child in self.children: 
@@ -560,10 +593,12 @@ class EmbedTreeNode():
      
 
     def __str__(self) -> str:
+        """Returns a highly detailed, indented tree visualization for debugging."""
         return self._format_tree(level=0)
 
 
     def _format_tree(self, level: int) -> str:
+        """Internal recursive formatter for the tree string representation."""
         indent = "  " * level
 
         # --- 1. ROOT SPECIFIC LOGIC ---
@@ -626,6 +661,10 @@ class EmbedTreeNode():
 
 
 def get_sampled_text(nodes: list[EmbedTreeNode]) -> str:
+    """
+    Creates a 'text snapshot' of a section by taking the start, middle, and end. 
+    This gives the LLM enough context to summarize the section without hitting token limits.
+    """
     # 1. Join all text from the group of nodes
     full_text = "\n".join([EmbedTreeNode.get_full_text(n) for n in nodes])
     
@@ -646,8 +685,8 @@ def get_sampled_text(nodes: list[EmbedTreeNode]) -> str:
 
 def generate_headings_from_sentences(sentences: list[str]) -> list[str]:
     """
-    Generate clean, short headings for a list of sentences using batching.
-    Returns a list of headings in the same order as input.
+    Uses GPT-4o-mini to convert sampled text chunks into formal document headings. 
+    Uses the LangChain .batch() method to process multiple chunks in parallel.
     """
     # 1. Validation and Setup
     if not sentences:
@@ -707,6 +746,11 @@ def generate_headings_from_sentences(sentences: list[str]) -> list[str]:
 
 
 def find_closest_cosine_sim(query_vec,list_vecs)->tuple[int,float]:
+    """
+    Standard vector math helper. Normalizes the vectors and calculates the dot product 
+    to find the most semantically similar heading in a list.
+    """
+    
     # Force list_vecs to be 2D (rows, features)
     if list_vecs.ndim == 1:
         list_vecs = list_vecs[np.newaxis, :]

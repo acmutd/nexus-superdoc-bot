@@ -1,5 +1,6 @@
 import boto3
 from botocore.exceptions import ClientError
+import os
 
 
 def test():
@@ -12,7 +13,7 @@ def test():
 
 
 dynamodb = boto3.resource('dynamodb')
-TABLE_NAME = 'docidstore'
+TABLE_NAME = os.getenv("DYNAMO_TABLE", "NEXUS-superdoc-id-store")#'NEXUS-superdoc-id-store'#docidstore'
 table = dynamodb.Table(TABLE_NAME)
 
 def save_course_docs(courseId, doc_ids):

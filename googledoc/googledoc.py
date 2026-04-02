@@ -25,70 +25,75 @@ from dynamodb.dynamodb import append_to_course_docs, fetch_all_course_docs
 SCOPES = ["https://www.googleapis.com/auth/documents","https://www.googleapis.com/auth/drive.file"] # Use full scope like 'https://www.googleapis.com/auth/documents' for write operations
 
 class GoogleDocsAPI:
+    """
+    Base class for Google API interaction. 
+    Handles authentication and service building for Docs and Drive
+    """
+
     def __init__(self, credentials_file='credentials.json', token_file='token.json'):
+        """Initializes the API wrapper with paths to credential and token files."""
         self.credentials_file = credentials_file
         self.token_file = token_file
         (self.doc_service,self.drive_service) = self.authenticate()
         #self.doc = None
     
     def authenticate(self):
-        """Authenticate and build the Google Docs service"""
-        
-        # If you have OAuth 2.0 credentials
+        """
+        Handles the OAuth2 authentication flow. 
+        It prioritizes existing tokens, handles memory-only refreshes (to stay Lambda-friendly),
+        and initializes the Docs (v1) and Drive (v3) service objects.
+        """
+    
         creds = None
-        # The file token.json stores the user's access and refresh tokens.
-        if os.path.exists(self.token_file):
-            creds = Credentials.from_authorized_user_file(self.token_file)
         
-        print(creds.valid)
-        # If there are no (valid) credentials available, let the user log in.
+        if os.path.exists(self.token_file):
+            # 1. Read the file into memory first
+            with open(self.token_file, 'r') as f:
+                token_data = json.load(f)
+            
+            # 2. Use 'from_authorized_user_info' to prevent the library 
+            # from trying to manage (and write to) the file on disk.
+            creds = Credentials.from_authorized_user_info(token_data, SCOPES)
+        
+        # 3. Handle token refresh
         if not creds or not creds.valid:
             if creds and creds.expired and creds.refresh_token:
-                creds.refresh(Request())
+                print("Refreshing expired Google token in memory...")
+                try:
+                    # This refreshes the 'creds' object but DOES NOT save to disk
+                    creds.refresh(Request())
+                except Exception as e:
+                    print(f"Failed to refresh token: {e}")
+                    raise Exception("Google Refresh Token is invalid or revoked.")
             else:
-                # You'll need to set up OAuth 2.0 credentials
-                # See: https://developers.google.com/docs/api/quickstart/python
-                flow = InstalledAppFlow.from_client_secrets_file(
-                    self.credentials_file, 
-                    scopes=SCOPES
-                )
-                creds = flow.run_local_server(port=0)
-            
-            # Save the credentials for the next run
-            with open(self.token_file, 'w') as token:
-                token.write(creds.to_json())
-        
-        return (build('docs', 'v1', credentials=creds),build('drive', 'v3', credentials=creds))
-        
-'''
-class GoogleDocsAPI:
-    def __init__(self, credentials_file='service-account-key.json'):
-        # In Docker, make sure this path matches where you COPY the file
-        self.credentials_file = credentials_file
-        self.doc_service, self.drive_service = self.authenticate()
-        self.doc = None
-
-    def authenticate(self):
-        SCOPES = ['https://www.googleapis.com/auth/documents', 
-                  'https://www.googleapis.com/auth/drive']
-        
-        # Load the service account credentials directly
-        creds = service_account.Credentials.from_service_account_file(
-            self.credentials_file, scopes=SCOPES)
-        
-        return (
-            build('docs', 'v1', credentials=creds),
-            build('drive', 'v3', credentials=creds)
-        )
-'''
+                # In Lambda, we cannot run flow.run_local_server(). 
+                # If we reach this block, it means token.json is missing or totally invalid.
+                raise FileNotFoundError("Valid token.json not found. Please generate it locally first.")
     
+        print(f"Credentials valid: {creds.valid}")
+        
+        # Build services
+        docs_service = build('docs', 'v1', credentials=creds)
+        drive_service = build('drive', 'v3', credentials=creds)
+        
+        return (docs_service, drive_service)
+        
+
     
 class GoogleDocsEditor(GoogleDocsAPI):
+    """
+    Extended class providing high-level editing capabilities.
+    Manages document structure, headings, named ranges, and batch updates.
+    """
     def __init__(self):
+        """Initializes the editor by calling the base API authentication."""
         super().__init__()
         
     def get_text_in_range_from_doc_obj(self,heading:str):
-        """Helper to extract text from a doc object already in memory."""
+        """
+        Extracts raw text from a specific named range (heading) within the current document object.
+        Iterates through document elements and slices text runs based on UTF-16 indices.
+        """
         named_range = self.find_named_range(heading)
         start_index = named_range['namedRanges'][0]['ranges'][0]['startIndex']
         end_index = named_range['namedRanges'][0]['ranges'][0]['endIndex']
@@ -116,6 +121,10 @@ class GoogleDocsEditor(GoogleDocsAPI):
 
 
     def create_google_doc(self, name:str, courseid:str):
+        """
+        Creates a new Google Doc, logs the ID to DynamoDB, and sets global 
+        'anyone with link can edit' permissions via the Drive API.
+        """
         try:
             # Create the document using the Docs API
             #print(f"Service Account Email: {self.doc_service._http.credentials.service_account_email}")
@@ -143,10 +152,14 @@ class GoogleDocsEditor(GoogleDocsAPI):
             return None
     
     def get_docids(self,courseid:str): 
+        """Retrieves a list of all document IDs associated with a specific course from DynamoDB."""
         return fetch_all_course_docs(courseId=courseid)
       
     def get_document_structure(self, document_id):
-        """Fetch the current document state"""
+        """
+        Fetches the complete JSON representation (structure) of a Google Doc.
+        This is required before performing range-based lookups or mutations.
+        """
         try:
             ##print("CALLED DOCUMENT STRUCTURE")
             self.document_id = document_id
@@ -157,17 +170,20 @@ class GoogleDocsEditor(GoogleDocsAPI):
             print(f"Error fetching document: {e}")
             return None
     
-    def text_utf16_len(self,text:str): 
+    def text_utf16_len(self,text:str):
+        """
+        Calculates the length of text in UTF-16 code units.
+        Google Docs API indices are based on UTF-16, not standard Python UTF-8 strings.
+        """ 
         return len((text).encode("utf-16-le"))//2
         
-    def descending_sort_inserttext(self,requests):
-        return sorted(requests, 
-                 key=lambda x: x.get("insertText", {})
-                               .get("location", {})
-                               .get("index", 0), 
-                 reverse=True) 
+    
             
     def batch_update(self,requests):
+        """
+        Executes a list of formatting or structural requests in a single API call.
+        This is the primary way to modify the document efficiently.
+        """
         if not requests or len(requests) == 0: 
             return
         try: 
@@ -188,6 +204,7 @@ class GoogleDocsEditor(GoogleDocsAPI):
     
   
     def find_named_range(self,heading:str)->dict|None:
+        """Looks up and returns the metadata for a specific 'namedRange' in the document."""
         document = self.doc
         named_ranges = document.get("namedRanges",{})
         for range_name in named_ranges.keys():
@@ -195,7 +212,12 @@ class GoogleDocsEditor(GoogleDocsAPI):
             if range_name==heading: 
                 return named_ranges[heading] 
         return None
+
     def create_heading(self,new_heading:str): 
+        """
+        Inserts new heading text, applies HEADING_2 style and bolding, 
+        and wraps the text in a Named Range for future referencing.
+        """
         (_,startIndex,_) = self.find_insertion_point()
         named_range = self.find_named_range(heading=new_heading)
         if named_range: 
@@ -247,7 +269,11 @@ class GoogleDocsEditor(GoogleDocsAPI):
         return (startIndex,endIndex)
     
     
-    def create_headings(self,headings:list[str]): 
+    def create_headings(self,headings:list[str]):
+        """
+        Batch-processes a list of strings, creating new headings for any that don't exist
+        and returning the start/end indices for all.
+        """ 
         ranges = []
         processed = {}
         for heading in headings:
@@ -272,7 +298,8 @@ class GoogleDocsEditor(GoogleDocsAPI):
 
                 
         
-    def delete_heading(self,old_heading:str): 
+    def delete_heading(self,old_heading:str):
+        """Removes both the text and the metadata associated with a specific heading.""" 
         named_range = self.find_named_range(heading=old_heading)
         if not named_range: 
             raise Exception(f"Heading: {old_heading} does not exist")
@@ -298,7 +325,13 @@ class GoogleDocsEditor(GoogleDocsAPI):
         },
     ]
         self.batch_update(requests=requests)
-    def update_heading(self,old_heading:str,new_heading:str): 
+
+
+    def update_heading(self,old_heading:str,new_heading:str):
+        """
+        Renames a heading by deleting the old text and inserting the new text,
+        then recreating the Named Range with adjusted indices.
+        """ 
         named_range = self.find_named_range(heading=old_heading)
         if not named_range: 
             raise Exception(f"Heading: {old_heading} does not exist")
@@ -348,7 +381,10 @@ class GoogleDocsEditor(GoogleDocsAPI):
         
             
     def find_insertion_point(self, target_heading=None):
-        """Locate the insertion point in the document"""
+        """
+        Determines where in the document to insert content, if provided a target_heading, returns the end of that heading content. 
+        Returns (startIndex, endIndex, status_code). Defaults to the end of the doc.
+        """
         document = self.doc
         body = document.get('body', {})
         content = body.get('content', [])
@@ -377,8 +413,13 @@ class GoogleDocsEditor(GoogleDocsAPI):
         print(f"Printing to {content[-1].get('endIndex') - 1}")
         return (content[-1].get('endIndex'),content[-1].get('endIndex') - 1,-1)
 
-    #Before modifying the google doc, we run a quick check on all of the 
+
     def mutate_named_ranges(self,document_id:str):
+        """
+        Scans all named ranges and bridges gaps between them. 
+        If there is extra whitespace or content between ranges, it deletes and 
+        recreates the range to ensure full document coverage for semantic syncing.
+        """
         #self.get_document_structure(document_id=document_id)
         document = self.doc
         named_ranges = document.get("namedRanges",{})
@@ -424,7 +465,17 @@ class GoogleDocsEditor(GoogleDocsAPI):
         self.get_document_structure(document_id=document_id) 
         #named_ranges = document.get("namedRanges",{})
     
+
+
+
     def render_etree_custom_nodes(self,superdoc_id:str,all_cust_nodes:list[EmbedTreeNode]): 
+        """
+        The main rendering pipeline. 
+        1. Ensures headings exist in the Doc.
+        2. Converts semantic 'EmbedTreeNodes' into 'GdocTreeNodes'.
+        3. Generates batched text and formatting requests.
+        4. Executes a massive batchUpdate to sync the PDF content into the Google Doc sections.
+        """
         print(f"Connecting to Google Doc: {superdoc_id}")
         self.get_document_structure(document_id=superdoc_id) # Set the active document
 
@@ -525,68 +576,11 @@ class GoogleDocsEditor(GoogleDocsAPI):
         self.batch_update(batch_all_requests)
         print(f"FINISHED BATCH UPDATE")
 
-       
-def test_render_to_gdoc():
-    # 1. Setup Data and Paths
-    superdoc_id = '1zjQClSEUE587kPrupY5fplFtUcB3OGEj5mKhplmiFxM' # Your specified ID
-    with open("files/Chloroplast 2.pdf", "rb") as f:
-        pdf_bytes = f.read()
-    strm = BytesIO(pdf_bytes)
     
-    # 2. Convert PDF to Semantic Tree
-    synt_tree = pdf_to_syntree(stream=strm)
-    emb_model = OpenAIEmbeddings(api_key=os.getenv("OPENAI_API_KEY")) 
-    
-    # 3. Initialize the Vector DB to get existing headings
-    pinecone_api_key = os.environ.get("PINECONE_API_KEY")
-    db = VectorDBManager(pc=Pinecone(pinecone_api_key))
-    db.initVectorStore(index_name="sdtest1", embedding=emb_model)
-    
-    # 4. Build and Process the EmbedTreeNode Tree
-    print("Building Semantic Tree...")
-    root = EmbedTreeNode._init_tree(root_node=synt_tree, emb_model=emb_model)
-    EmbedTreeNode._embed_tree_(root)
-    EmbedTreeNode._calc_mean_embedding(root)
-    EmbedTreeNode._calc_block_len(root)
-    
-    # 5. Inject Custom Headings from Pinecone
-    # Note: Using the course_id and reference doc ID from your example
-    headings = db.get_all_headings_for_doc(
-        course_id="prof-1302", 
-        superdoc_id="1VLXyc4FDmf0kENOa__O-70ANrKUsxcAUV9wKDSh-X9A"
-    )
-    root.insert_custom_headings(headings=headings)
-    
-    # 6. Transform to Google Doc Tree
-    print("Transforming to Gdoc Hierarchical Tree...")
-    gdoc_root = GdocTreeNode._init_tree(etree=root)
-    
-    # 7. Initialize Google Docs Editor and Render
-    print(f"Connecting to Google Doc: {superdoc_id}")
-    self = GoogleDocsEditor()
-    self.document_id = superdoc_id # Set the active document
-    
-    start_render = time.perf_counter()
-    
-    # This calls the recursive logic to generate requests and upsert
-    self.upsert_gdoc_tree(gdoc_root)
-    
-    end_render = time.perf_counter()
-    print(f"Success! Tree rendered to Google Docs in {(end_render - start_render):.2f}s")    
-    
-    
+
+
 def main():
-    # Initialize the editorpinecone_api_key = os.environ.get("PINECONE_API_KEY")
-    #drive_activity = GoogleDriveActivity()
-    #insert_text_ex()
-    #DOCUMENT_ID = '1PD0Pd_O7BUplXV1RJ3xGsBp9e_UwXWqkhuTCMgAxKcY'
-    #self = GoogleDocsEditor()
-    #self.update_heading(old_heading="Introduction",new_heading="Goofy Goober")
-    #print(self.find_named_range(heading="Introduction"))
-    #self.get_document_structure(document_id=DOCUMENT_ID)
-    #self.create_google_doc(name="trees",courseid="prof-1302")
-    #print(f"Doc Content{self.get_text_in_range_from_doc_obj(heading="Thylakoid Membranes Maximize Light Absorption")}")
-   # test_render_to_gdoc()
+    """Main entry point for local debugging."""
     pass
 if __name__ == "__main__":
     main()

@@ -21,18 +21,15 @@ from pdf_pipeline.etree import EmbedTreeNode
 
 
 class GdocTreeNode():
+    """
+    Acts as a bridge between the semantic tree and the Google Docs API.
+    Its primary job is to calculate indices and generate 'BatchUpdate' requests.
+    """
     def __init__(self,enode:EmbedTreeNode):
-        '''
-        self.enode = enode
-        self.node:SyntaxTreeNode = self.enode.node
-        self.type:str = self.node.type
-        self.content:str = None if self.type=="root" else enode.content
-        self.children:list[GdocTreeNode] = []
-        self.text_requests = []
-        self.format_requests = []
-        #self.level = -1
-        self.is_custom_node = enode.is_custom_node
-        '''
+        """
+        Initializes the node by mirroring the structure of its semantic counterpart.
+        It keeps track of content, node type, and whether it was a 'custom' injected heading.
+        """
         self.enode = enode
         self.node = enode.node
         self.type = enode.type
@@ -41,7 +38,11 @@ class GdocTreeNode():
         self.children = []
         self.is_custom_node = enode.is_custom_node
     @classmethod
-    def _init_tree(cls,etree:EmbedTreeNode): 
+    def _init_tree(cls,etree:EmbedTreeNode):
+        """
+        A recursive factory method. It walks the entire EmbedTree and 
+        wraps every node in a GdocTreeNode layer, preserving the hierarchy.
+        """ 
         #create current node's wrapper object
         curr = cls(enode=etree)
         #wrap all its children
@@ -52,6 +53,10 @@ class GdocTreeNode():
         return curr
    
     def _dispatch_node_type(self, index: int, level: int, context: dict = None) -> tuple[list[dict], list[dict], int]:
+        """
+        The 'Traffic Controller.' It looks at the Markdown node type (heading, paragraph, list)
+        and decides which specific formatting method should handle the text generation.
+        """
         node_type = self.node.type
         context = context or {}
 
@@ -95,6 +100,11 @@ class GdocTreeNode():
         return [], [], 0
 
     def generate_formatted_requests(self, start_index: int, level: int = 0, context: dict = None) -> tuple[list[dict], list[dict], int]:
+        """
+        The recursive engine of the class. It calculates the 'current_offset' (how many 
+        characters have been inserted) so that the next node knows exactly where to 
+        start its insertion in the Google Doc.
+        """
         all_text_requests = []
         all_format_requests = []
         current_offset = 0
@@ -129,6 +139,11 @@ class GdocTreeNode():
         return all_text_requests, all_format_requests, current_offset
 
     def _format_heading(self, index: int,level:int) -> tuple[list[dict], int]:
+        """
+        Generates requests to insert heading text and applies 'HEADING_X' 
+        paragraph styles based on the tree depth.
+        """
+        
          # Use self.enode.content (where custom headings store text) or self.content
         content = getattr(self.enode, 'content', self.content) or "Untitled"
         text = content.strip() + "\n"
@@ -148,6 +163,12 @@ class GdocTreeNode():
         return text_requests, format_requests, text_len
 
     def _format_paragraph_as_leaf(self, index: int, level: int, context: dict) -> tuple[list[dict], list[dict], int]:
+        """
+        Handles the insertion of body text. This is where complex layout logic 
+        happens, including indentation math (measured in Points) and 
+        attaching bullet/numbering presets to paragraphs.
+        """
+        
         #Clean the content - strip to prevent double-spacing
         raw_content = self._extract_clean_text(self).strip()
         if not raw_content:
@@ -206,8 +227,8 @@ class GdocTreeNode():
 
     def _extract_clean_text(self, node) -> str:
         """
-        Recursively finds TEXT nodes. 
-        Ignores the 'content' attribute of INLINE nodes to prevent duplicates.
+        A recursive cleaner. It digs through inline Markdown nodes (like Bold or Italics)
+        to extract raw text pieces and joins them into a single coherent string.
         """
         pieces = []
 
@@ -222,7 +243,16 @@ class GdocTreeNode():
 
         return " ".join(filter(None, pieces))
 
+
+
     def _build_native_table_requests(self, raw_content: str, start_index: int, level: int):
+        """
+        DEPRECATED
+        The 'Geometry Teacher.' Converts a raw Markdown table string into 
+        a native Google Docs Table. It calculates the complex 'boundary indices' 
+        required to place text inside specific table cells.
+        """
+        
         # 1. Clean and split the markdown into rows/cols
         # We filter out the '---' separator row used in markdown
         lines = [line.strip() for line in raw_content.split('\n') if line.strip()]
@@ -298,10 +328,14 @@ class GdocTreeNode():
         
 
     def __str__(self) -> str:
-        """Entry point for string representation."""
+        """Standard entry point for tree visualization."""
         return self._format_tree(level=0)
 
     def _format_tree(self, level: int) -> str:
+        """
+        Generates a readable, indented string of the Gdoc tree, showing 
+        node types, nesting depth [D:X], and text snippets for debugging.
+        """
         indent = "  " * level
         
         # 1. Handle the Root specially
@@ -335,5 +369,9 @@ class GdocTreeNode():
 
    
 
-def text_utf16_len(text:str): 
+def text_utf16_len(text:str):
+    """
+    Helper to calculate string length in UTF-16 code units. 
+    Crucial because Google Docs API indices are not 0-indexed bytes or UTF-8 chars.
+    """ 
     return len((text).encode("utf-16-le"))//2

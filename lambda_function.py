@@ -1,44 +1,69 @@
 import os
 import urllib.request
 from io import BytesIO
-from fastapi import FastAPI, HTTPException, Body
-from mangum import Mangum
-from pydantic import BaseModel
-
-from superdoc.superdoc import superdoc
-
-app = FastAPI()
-import os
-import urllib.request
-from io import BytesIO
 from typing import Optional, List
 from fastapi import FastAPI, HTTPException, Body
 from mangum import Mangum
 from pydantic import BaseModel
+import pathlib
+import json
 
+
+def debug_file_status():
+    print("--- PRE-FLIGHT FILE CHECK ---")
+    files_to_check = ["token.json", ".env"]
+    
+    for filename in files_to_check:
+        path = pathlib.Path(filename)
+        if path.exists():
+            size = path.stat().st_size
+            print(f"FILE FOUND: {filename} ({size} bytes)")
+            
+            if size > 0:
+                try:
+                    with open(filename, 'r') as f:
+                        content = f.read()
+                        # Verify if it's valid JSON (for token.json)
+                        if filename == "token.json":
+                            json.loads(content)
+                            print(f"VALIDATION: {filename} is VALID JSON.")
+                        # Check first few chars of .env without leaking secrets
+                        if filename == ".env":
+                            print(f"VALIDATION: .env starts with: {content[:10]}...")
+                except Exception as e:
+                    print(f"VALIDATION FAILED for {filename}: {str(e)}")
+            else:
+                print(f"WARNING: {filename} IS EMPTY (0 bytes)!")
+        else:
+            print(f"ERROR: {filename} NOT FOUND in {os.getcwd()}")
+    print("--- END CHECK ---")
+
+
+debug_file_status()
 
 app = FastAPI(title="SuperDoc API")
-
+PINECONE_INDEX = os.getenv("PINECONE_INDEX", "superdoc-headings")
+STAGE_PATH = os.getenv("STAGE_PATH", "/prod")
 # --- Request Models ---
 
 class MergePDFRequest(BaseModel):
     pdfUrl: str
     courseId: str
     documentId: Optional[str] = None
-    index_name: str = "sdtest1"
+    index_name: str = PINECONE_INDEX
 
 class HeadingOperation(BaseModel):
     courseId: str
     documentId: str
     heading: str  # Used for create/delete
-    index_name: str = "sdtest1"
+    index_name: str = PINECONE_INDEX
 
 class UpdateHeadingRequest(BaseModel):
     courseId: str
     documentId: str
     oldHeading: str
     newHeading: str
-    index_name: str = "sdtest1"
+    index_name: str = PINECONE_INDEX
 
 class CreateDocRequest(BaseModel):
     courseId: str
@@ -58,7 +83,7 @@ async def log_requests(request, call_next):
 
 @app.get("/health")
 def health_check():
-    return {"status": "healthy"}
+    return {"status": "charlie charlie kirky"}
 
 @app.post("/merge_pdf")
 def handle_merge_pdf(req: MergePDFRequest):
@@ -76,7 +101,8 @@ def handle_merge_pdf(req: MergePDFRequest):
         
         return {"status": "success", "documentId": sd.DOCUMENT_ID}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        print(traceback.format_exc()) 
+        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {str(e)}")
 
 @app.post("/headings/create")
 def create_heading(req: HeadingOperation):
@@ -87,7 +113,8 @@ def create_heading(req: HeadingOperation):
         sd.create_heading(new_heading=req.heading)
         return {"status": "heading created", "documentId": req.documentId}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        print(traceback.format_exc()) 
+        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {str(e)}")
 
 @app.delete("/headings/delete")
 def delete_heading(req: HeadingOperation):
@@ -98,7 +125,8 @@ def delete_heading(req: HeadingOperation):
         sd.delete_heading(old_heading=req.heading)
         return {"status": "heading deleted", "documentId": req.documentId}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        print(traceback.format_exc()) 
+        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {str(e)}")
 
 @app.put("/headings/update")
 def update_heading(req: UpdateHeadingRequest):
@@ -109,7 +137,8 @@ def update_heading(req: UpdateHeadingRequest):
         sd.update_heading(old_heading=req.oldHeading, new_heading=req.newHeading)
         return {"status": "heading updated", "documentId": req.documentId}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        print(traceback.format_exc()) 
+        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {str(e)}")
 
 @app.get("/documents/{course_id}")
 def get_course_documents(course_id: str):
@@ -121,7 +150,8 @@ def get_course_documents(course_id: str):
         ids = sd.get_docids(course_id=course_id)
         return {"courseId": course_id, "documentIds": ids}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        print(traceback.format_exc()) 
+        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {str(e)}")
 
 @app.post("/documents/create")
 def create_new_document(req: CreateDocRequest):
@@ -129,46 +159,21 @@ def create_new_document(req: CreateDocRequest):
 
     try:
         # Note: Using the standalone create_document method in the class
-        sd = superdoc(DOCUMENT_ID="DUMMY", COURSE_ID=req.courseId)
-        doc_map = sd.get_docids(course_id=course_id)
-        if doc_map.get(course_id,None):
-            raise HTTPException(status_code=400, detail=f"A superdoc with the name {req.documentName} already exists!")
-        response = sd.create_document(name=req.documentName, course_id=req.courseId)
 
-        return {"status": "created", "document": response}
+        sd = superdoc(DOCUMENT_ID="DUMMY", COURSE_ID=req.courseId)
+        print("superdoc class initalized")
+        doc_map = sd.get_docids(course_id=req.courseId)
+        print("doc map retrieved")
+        if doc_map.get(req.documentName,None):
+            raise HTTPException(status_code=400, detail=f"A superdoc with the name {req.documentName} already exists!")
+        print("same name check completed")
+        response = sd.create_document(name=req.documentName, course_id=req.courseId)
+        docId = response.get('documentId')
+        print("response retrieved")
+        return {"status": "created", "document": docId}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        print(traceback.format_exc()) 
+        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {str(e)}")
 
 # Lambda Handler
-handler = Mangum(app, lifespan="off", api_gateway_base_path="/dev")
-
-if __name__ == "__main__":
-    import json
-    from io import BytesIO
-    # We already have 'superdoc' imported at the top of the file
-  
-    # 1. Configuration for DIRECT test (Bypassing API)
-    MY_DOC_ID = '13OiEdtje4wMZGT1LEfVmj3RmAeR1BchUF6eZBaICH8w'
-    MY_COURSE_ID = "RHET1302"
-    LOCAL_PDF_PATH = "/Users/tharunsevvel/Downloads/Chloroplasts.pdf"
-
-
-    print(f"\n--- TRIGGERING DIRECT METHOD CALL ---")
-    sd = superdoc(DOCUMENT_ID=MY_DOC_ID, COURSE_ID=MY_COURSE_ID)
-
-
-    if os.path.exists(LOCAL_PDF_PATH):
-        with open(LOCAL_PDF_PATH, "rb") as f:
-            pdf_bytes = f.read()
-        strm = BytesIO(pdf_bytes)
-
-
-        print("Starting Hierarchical Merge...")
-        # We wrap this in a try/except to catch that Pinecone/List error
-        try:
-            sd.merge_pdf_hierarchical(stream=strm)
-            print("Done! Check your Google Doc.")
-        except Exception as e:
-            print(f"Merge failed: {e}")
-            print("Check if reconcile_structure is returning None instead of a list.")
-
+handler = Mangum(app, lifespan="off", api_gateway_base_path=STAGE_PATH)

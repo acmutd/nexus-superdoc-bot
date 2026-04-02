@@ -29,17 +29,27 @@ In order to do the superdoc comparison alg properly
 '''
 
 class VectorDBManager(BaseModel):
+    """
+    The Semantic Controller. Manages Pinecone indices, handles CRUD operations 
+    for document headings.
+    """
     pc:Pinecone
     vs:Optional[PineconeVectorStore] = None
     index_name:Optional[str] = None
     model_config = {"arbitrary_types_allowed" : True}
+
+
     def initVectorStore(self,index_name:str,embedding:OpenAIEmbeddings):
+        """Connects to an existing Pinecone index and initializes the LangChain wrapper."""
         if not self.pc.has_index(index_name): 
             raise ValueError(f"Index:{index_name}, does not exist")
         index = self.pc.Index(index_name)
         self.vs = PineconeVectorStore(index=index,embedding=embedding)
         self.index_name = index_name        
+    
+    
     def createIndex(self,index_name:str):
+        """Provisions a new Serverless Pinecone index optimized for cosine similarity."""
         if self.pc.has_index(index_name): 
             raise ValueError(f"Index:{index_name}, already exists")
         self.pc.create_index(
@@ -51,7 +61,7 @@ class VectorDBManager(BaseModel):
         return self.pc.Index(index_name)
     
     def generate_timestamp_id(self,course_id):
-        """Generate ID using both content and timestamp"""
+       """Generates a collision-resistant ID using the course context and epoch time."""
         timestamp = int(time.time() * 1000)
         return f"{course_id}_{timestamp}"  
     
@@ -193,6 +203,8 @@ class VectorDBManager(BaseModel):
             raise Exception("OpenAIEmbeddings not available. Please install langchain-openai")
         except Exception as e:
             raise Exception(f"Failed to replace vector DB heading: {str(e)}")
+    
+    
     def _generate_heading_from_sentence(self, sentence: str) -> str:
         """
         Generate a clean, short heading using an OpenAI LLM.
@@ -264,95 +276,9 @@ class VectorDBManager(BaseModel):
             print(f"Error fetching headings: {e}")
             return []
 
-    def modify_embed_tree(self, etree:EmbedTreeNode, course_id:str, superdoc_id:str):
-        headings = get_all_headings_for_doc(course_id=course_id,superdoc_id=superdoc_id)
-
-
-    def modify_doc_heading(self, documents: list[Document], course_id: str, superdoc_id: str) -> list[Document]:
-        """
-            Standardizes document headings across similar content using semantic similarity.
-            Reuses existing headings when content is highly similar (≥0.95 cosine similarity),
-            otherwise uses current headings. Updates vector database with new headings.
-        """
-        gdoc_editor = GoogleDocsEditor() 
-        gdoc_editor.get_document_structure(document_id=superdoc_id)
-        modified_docs = []
-        index = self.pc.Index(self.index_name)
-        threshold = 0.95
-        prev_headings = []
-        for doc in documents:
-        # Search for similar headings
-            #instead of self.vs try index
-            #print(f"Trying index search on: {doc.metadata["chunk_embedding"]}")
-            response = index.query(
-                top_k=1, filter={"source": superdoc_id},
-                vector=doc.metadata["chunk_embedding"],
-                lambda_mult=1, 
-                namespace=course_id,
-                include_metadata=True,
-                include_values=True
-            )
-            #print(f"Result:{response.get("matches",[{}])[0].get("metadata",{})}")
-            # Get current heading
-            results = response.get("matches")
-            current_heading = None
-            if doc.metadata.get("position",None):
-                current_heading = doc.metadata.get("position", ["basic"])[-1]
-            if not current_heading:
-                relevant = doc.metadata.get("relevant_sentence") or doc.metadata.get("page_content") or ""
-                current_heading = self._generate_heading_from_sentence(sentence=relevant)
-            #fetched_heading = ""
-            if len(results) == 0:
-                # No existing headings found - use current one
-                new_heading = current_heading
-            else:
-                # Calculate actual cosine similarity
-                similarity = cosine_similarity(
-                    [doc.metadata["chunk_embedding"]],
-                    [results[0].values]  # Need stored embedding results[0].metadata.get("embedding", [])]
-                )[0][0]
-                fetched_heading = results[0].metadata.get("position")[-1]
-                
-                if similarity >= threshold:
-                    # Good match - use the found heading
-                    gdoc_content = gdoc_editor.get_text_in_range_from_doc_obj(fetched_heading)
-                    gdoc_content = gdoc_content.split("\n")
-                    not_redundant = True
-                    for paragraph in gdoc_content: 
-                        val = extract_text_similarity_jaccard(paragraph,doc.page_content)
-                        not_redundant = not_redundant and (val<0.3)
-                    if not_redundant:
-                        new_heading = fetched_heading
-                    else:
-                        print(f"REDUNDANT DOC FOUND")
-                        continue    
-                else:
-                    # Poor match - use current heading
-                    new_heading = current_heading
-        
-            # Update document
-            print(f"New Heading:{new_heading}")
-            doc.metadata["position"] = [new_heading]
-            modified_docs.append(doc)
-            # Store in vector DB (if new or modified)
-            if (len(results) == 0 or similarity < threshold) and not (new_heading in prev_headings):
-                index.upsert(vectors=[{
-                    "id": self.generate_timestamp_id(course_id),
-                    "values": doc.metadata["chunk_embedding"],
-                    "metadata": {"position": [new_heading], "source": superdoc_id, "heading": new_heading}
-                }], namespace=course_id)
-            #index = self.pc.Index(self.index_name)
-            prev_headings.append(new_heading)
-        return modified_docs  # Return ALL modified docs
-                 
-    
-
 
     def remove_heading_entry(self,heading:str,course_id:str,superdoc_id:str): 
         try:
-            # Generate OpenAI embedding for the new heading text
-
-            embeddings = OpenAIEmbeddings()
             index = self.pc.Index(self.index_name)
 
             # Delete old entries
@@ -372,24 +298,12 @@ class VectorDBManager(BaseModel):
                 print(f"No existing entries found with heading: '{heading}'")
         except Exception as e:
             raise Exception(f"Failed to delete vector DB heading: {str(e)}")                            
-            
-    #adding document to vector store-append misleading cuz it just adds it to the database
-    def append_documents(self,documents:list[Document],course_id:str,superdoc_id:str):
-        
-        
-        index = self.pc.Index(self.index_name)
-        filtered_docs = ""
-        index.upsert(
-            vectors=[{
-                "id":self.generate_timestamp_id(doc.course_id), 
-                "values": doc.metadata["chunk_embedding"],
-                "metadata": {"position":doc.metadata["position"],"superdoc":superdoc_id,"heading":doc.page_content}
-                    
-            } for doc in documents],
-            namespace=course_id)
 
     def append_documents(self,e_branches:list[EmbedTreeNode],course_id:str,superdoc_id:str):
-        
+        """
+        Batch-uploads semantic branches of an EmbedTree. 
+        Uses the branch's 'mean_emb' (the centroid of all its children) as the vector.
+        """
         if len(e_branches)==0:
             return
         index = self.pc.Index(self.index_name)
@@ -405,54 +319,8 @@ class VectorDBManager(BaseModel):
                 "metadata": {"superdoc":superdoc_id,"heading":branch.content}
                     
             } for branch in e_branches],
-            namespace=course_id)
-
-        
-def tree_test(): 
-    
-    with open("files/Chloroplast 2.pdf","rb") as f:
-        pdf_bytes = f.read()
-    strm = BytesIO(pdf_bytes)
-    synt_tree = pdf_to_syntree(stream=strm)
-
-    emb_model = OpenAIEmbeddings(api_key=os.getenv("OPENAI_API_KEY")) 
-    heading_gen_model = llm = ChatOpenAI(
-                model="gpt-4o-mini",
-                temperature=0.1,
-                max_tokens=20  # keep it short
-            )
-    pinecone_api_key = os.environ.get("PINECONE_API_KEY")
-    db = VectorDBManager(pc=Pinecone(pinecone_api_key))
-    db.initVectorStore(index_name="sdtest1", embedding=OpenAIEmbeddings(api_key=os.getenv("OPENAI_API_KEY")))          
-    #print(pdf_to_stree(stream=strm).pretty())
-    start = time.perf_counter()
-    root = EmbedTreeNode._init_tree(root_node=synt_tree,emb_model=emb_model)
-    EmbedTreeNode._embed_tree_(root)
-    EmbedTreeNode._calc_mean_embedding(root)
-    EmbedTreeNode._calc_block_len(root)
-    headings = db.get_all_headings_for_doc(course_id="prof-1302",superdoc_id="1VLXyc4FDmf0kENOa__O-70ANrKUsxcAUV9wKDSh-X9A")
-    new_headings = root.insert_custom_headings(headings=headings)
-    root.display_custom_headings()
-    end = time.perf_counter() 
-    print(f"Time:{(end-start):.2f}")
-    print(root)                
+            namespace=course_id)           
                 
 if __name__ == "__main__": 
-    '''
-    pinecone_api_key = os.environ.get("PINECONE_API_KEY")
-    print(f"Start of VectorDBManager init")
-    db = VectorDBManager(pc=Pinecone(pinecone_api_key))
-    db.initVectorStore(index_name="sdtest1", embedding=OpenAIEmbeddings(api_key=os.getenv("OPENAI_API_KEY")))
-    print(f"Start of pdf conversion")
-    converter = DocumentConverter()
-    doc = converter.convert("./files/ResearchPaperTurnIn.pdf").document 
-    print(f"Start of chunking")
-    chunker = DocSemChunker() 
-    chunk_iter = list(chunker.chunk(dl_doc=doc,doc_name="rpaper"))
-    print(f"Start of modifying headings")
-    db.modify_doc_heading(documents=chunk_iter,superdoc_id="rpaper",course_id="RHET1302")
-    #db.append_documents(documents=chunk_iter,superdoc_str="rpaper",course_id="RHET1302")
-    #DOCUMENT CHUNKING AND UPLOADING
-    '''
-    tree_test()
+    pass
 
