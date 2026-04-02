@@ -149,11 +149,58 @@ class superdoc():
         self.docs_editor.create_heading(new_heading=new_heading)
         self.db.create_vectordb_heading(heading_text=new_heading,course_id=self.COURSE_ID,superdoc_id=self.DOCUMENT_ID)
 
-    '''Updates old_heading in both google docs and vectorDb'''
     def update_heading(self,old_heading:str,new_heading:str):
+        '''Updates old_heading in both google docs and vectorDb'''
+
         #update googledoc heading named range
         self.docs_editor.update_heading(old_heading=old_heading,new_heading=new_heading)
         self.db.replace_vectordb_heading_with_text(old_heading=old_heading,new_heading_text=new_heading,course_id=self.COURSE_ID,superdoc_id=self.DOCUMENT_ID)
+
+
+
+    def fix_heading_update(self): 
+         ''' 
+            Get document structure, 
+            for each heading in vectorDB check if the it exists in doc-structure, 
+                if it does exist, check if heading exists via check of "HEADING<>:" exists
+                    if HEADING<>: is changed, add (new-vector-upsert requests to a list), and HEADING<>: to a delete list 
+
+                else if it doesn't exist, add HEADING<>: to the delete list 
+
+            batch delete:delete list from vector db 
+            batch add: new-vector-upsert request to a list 
+        
+        '''
+        pass 
+
+    def fix_new_content(self): 
+        ''' 
+            Get Document structure,
+            detect skips(make new method in googledoceditor)
+            
+            new_vector_list = []
+            create_heading_list = []           
+            
+            for each (start,end) in skips: 
+                text = get_doc_text(start,end) 
+                if(text and utf-text-len(text)>30): 
+                    new_heading = generate_heading(text) 
+                    create_heading_list.append(new_heading,start,end)
+                    new_vector_list.append(new_heading) 
+
+            batch update create_heading_list 
+            batch update new_vector_list
+        
+        '''
+        pass
+
+
+    '''
+    
+        Google Doc creation and fetching
+    
+    '''
+
 
     def create_document(self,name:str,course_id): 
         return self.docs_editor.create_google_doc(name=name,courseid=course_id)
