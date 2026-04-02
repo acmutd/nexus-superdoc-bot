@@ -161,12 +161,12 @@ class superdoc():
     def fix_heading_update(self): 
         """
         Synchronizes the document structure from Google Docs with Pinecone.
-        Finds changed or deleted headings and processes them in  batches
-        for both OpenAI API calls and Pinecone vector operations.
+        Finds changed or deleted headings and processes them using VectorDBManager
+        batch methods for high-efficiency synchronization.
         """
-        #Fetch current live doc structure and existing DB headings
+        #Fetch current live doc structure and existing DB headings via the manager
         self.docs_editor.get_document_structure() 
-        doc_headings = self.get_all_headings_for_doc(
+        doc_headings = self.db_manager.get_all_headings_for_doc(
             course_id=self.COURSE_ID, 
             superdoc_id=self.DOCUMENT_ID
         )
@@ -174,15 +174,12 @@ class superdoc():
         delete_ids = []
         headings_to_embed = []
         
-        def chunk_list(lst, n):
-            for i in range(0, len(lst), n):
-                yield lst[i:i + n]
-
         #Extract and analyze document content
         for db_entry in doc_headings: 
             heading_text = db_entry.get("heading")
             vector_id = db_entry.get("id")
             
+            # Extract text using the decoupled index-based method
             content_under_heading = self.get_text_in_range_from_doc_obj(heading_text)
             
             # Case 1: Heading or its content no longer exists in the document
@@ -195,28 +192,25 @@ class superdoc():
             if prefix_target not in content_under_heading: 
                 delete_ids.append(vector_id)
                 
+                # Identify the new heading string (text before the first colon)
                 parts = content_under_heading.split(":", 1)
                 potential_new_heading = parts[0].strip()
                 
                 if potential_new_heading:
-                    # Queue the text for bulk embedding instead of querying immediately
                     headings_to_embed.append(potential_new_heading)
 
+        #Batch Query OpenAI for all modified headings
         vectors_to_upsert = []
-
-        # Batch Query OpenAI for all queued headings
         if headings_to_embed:
-            print(f"Batch embedding {len(headings_to_embed)} headings via OpenAI...")
+            print(f"Batch embedding {len(headings_to_embed)} changed headings...")
             
-            # OpenAI has limits on massive batch arrays, chunking at 500.
-            for text_chunk in chunk_list(headings_to_embed, 500):
-                # embed_documents takes a List[str] and returns a List[List[float]]
+            # Chunking OpenAI requests specifically to stay under token/payload limits
+            for text_chunk in self.chunk_list(headings_to_embed, 500):
                 embedded_vectors = self.emb_model.embed_documents(text_chunk)
                 
-                # Map them back together
                 for text, vector in zip(text_chunk, embedded_vectors):
                     vectors_to_upsert.append({
-                        "id": self.generate_timestamp_id(self.COURSE_ID),
+                        "id": self.db_manager.generate_timestamp_id(self.COURSE_ID),
                         "values": vector,
                         "metadata": {
                             "superdoc": self.DOCUMENT_ID,
@@ -224,47 +218,116 @@ class superdoc():
                         }
                     })
 
-        # Execute Pinecone operations with a strict limit of 1,000 per request
-        index = self.pc.Index(self.index_name)
-        PINECONE_BATCH_LIMIT = 1000
+        #Execute Batch Operations via VectorDBManager
+        # The manager handles the 1,000-vector Pinecone limit internally.
         
-        # Batch Delete
         if delete_ids:
-            print(f"Processing {len(delete_ids)} total deletions in Pinecone...")
-            for chunk in chunk_list(delete_ids, PINECONE_BATCH_LIMIT):
-                print(f"Deleting chunk of {len(chunk)} vectors...")
-                index.delete(ids=chunk, namespace=self.COURSE_ID)
+            self.db_manager.batch_delete_vectors(
+                vector_ids=delete_ids, 
+                course_id=self.COURSE_ID
+            )
 
-        # Batch Upsert
         if vectors_to_upsert:
-            print(f"Processing {len(vectors_to_upsert)} total upserts in Pinecone...")
-            for chunk in chunk_list(vectors_to_upsert, PINECONE_BATCH_LIMIT):
-                print(f"Upserting chunk of {len(chunk)} vectors...")
-                index.upsert(vectors=chunk, namespace=self.COURSE_ID)
+            self.db_manager.batch_upsert_vectors(
+                vectors=vectors_to_upsert, 
+                course_id=self.COURSE_ID
+            )
             
         print("Superdoc synchronization complete.")
                  
 
-    def fix_new_content(self): 
-        ''' 
-            Get Document structure,
-            detect skips(make new method in googledoceditor)
-            
-            new_vector_list = []
-            create_heading_list = []           
-            
-            for each (start,end) in skips: 
-                text = get_doc_text(start,end) 
-                if(text and utf-text-len(text)>30): 
-                    new_heading = generate_heading(text) 
-                    create_heading_list.append(new_heading,start,end)
-                    new_vector_list.append(new_heading) 
-
-            batch update create_heading_list 
-            batch update new_vector_list
+   def fix_new_content(self): 
+        """
+        Detects new content in document skips, generates headings via batch LLM,
+        inserts them into the Google Doc, and syncs them as vectors to Pinecone
+        using the optimized batch methods in VectorDBManager.
+        """
+        # Fetch live structure and identify gaps
+        document_structure = self.docs_editor.get_document_structure() 
+        skips = self.catch_skips()
         
-        '''
-        pass
+        skips_to_process = []
+        samples_for_llm = []
+        
+        #Extract and sample text from skips
+        for skip in skips:
+            start_idx = skip.get('startIndex')
+            end_idx = skip.get('endIndex')
+            
+            # Using your decoupled extraction method
+            text = self.get_text_in_indices_from_doc_obj(start_idx, end_idx)
+            
+            # Length threshold
+            if text and len(text) > 30: 
+                skips_to_process.append(skip)
+                
+                # Turn the text into a constant amount for the LLM
+                if len(text) <= 100:
+                    samples_for_llm.append(text)
+                else:
+                    start_slice = text[:30]
+                    mid_idx = len(text) // 2
+                    middle_slice = text[mid_idx - 15 : mid_idx + 15]
+                    end_slice = text[-30:]
+                    sampled_text = f"{start_slice}...{middle_slice}...{end_slice}"
+                    samples_for_llm.append(sampled_text)
+
+        if not samples_for_llm:
+            print("No new content gaps detected above minimum threshold.")
+            return
+
+        #Batch generate headings for the sampled text
+        print(f"Generating headings for {len(samples_for_llm)} new content blocks...")
+        new_headings = self.generate_headings_from_sentences(samples_for_llm)
+        
+        #Batch update Google Docs and prep text for embedding
+        print(f"Applying {len(new_headings)} new headings to Google Docs...")
+        
+        vectors_to_upsert = []
+        
+        for i, heading in enumerate(new_headings):
+            skip_data = skips_to_process[i]
+            original_start = skip_data['startIndex']
+            original_end = skip_data['endIndex']
+            
+            # Action on Google Doc
+            self.docs_editor.create_heading_and_named_range(
+                heading=heading,
+                start_index=original_start,
+                end_index=original_end
+            )
+            
+            # Queue the raw string for the OpenAI batch call
+            vectors_to_upsert.append(heading)
+
+        # Batch process embeddings and delegate upsert to VectorDBManager
+        if vectors_to_upsert:
+            print(f"Batch embedding {len(vectors_to_upsert)} new headings via OpenAI...")
+            embedded_vectors = self.emb_model.embed_documents(vectors_to_upsert)
+            
+            pinecone_payload = []
+            for text, vector in zip(vectors_to_upsert, embedded_vectors):
+                pinecone_payload.append({
+                    "id": self.db_manager.generate_timestamp_id(self.COURSE_ID),
+                    "values": vector,
+                    "metadata": {
+                        "superdoc": self.DOCUMENT_ID,
+                        "heading": text,
+                    }
+                })
+            
+            # Utilizing the new bulletproof batch method we just built!
+            self.db_manager.batch_upsert_vectors(
+                vectors=pinecone_payload, 
+                course_id=self.COURSE_ID
+            )
+
+        print("Superdoc structure generation and vector sync complete.")
+
+    def _chunk_list(self, lst, n):
+        """Helper generator to split lists into batch-safe payloads."""
+        for i in range(0, len(lst), n):
+            yield lst[i:i + n]
 
 
     '''

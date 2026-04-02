@@ -24,6 +24,9 @@ from dynamodb.dynamodb import append_to_course_docs, fetch_all_course_docs
 # If modifying these SCOPES, delete the file token.json.
 SCOPES = ["https://www.googleapis.com/auth/documents","https://www.googleapis.com/auth/drive.file"] # Use full scope like 'https://www.googleapis.com/auth/documents' for write operations
 
+MIN_BLOCK_LEN = 30
+
+
 class GoogleDocsAPI:
     """
     Base class for Google API interaction. 
@@ -88,15 +91,8 @@ class GoogleDocsEditor(GoogleDocsAPI):
     def __init__(self):
         """Initializes the editor by calling the base API authentication."""
         super().__init__()
-        
-    def get_text_in_range_from_doc_obj(self,heading:str):
-        """
-        Extracts raw text from a specific named range (heading) within the current document object.
-        Iterates through document elements and slices text runs based on UTF-16 indices.
-        """
-        named_range = self.find_named_range(heading)
-        start_index = named_range['namedRanges'][0]['ranges'][0]['startIndex']
-        end_index = named_range['namedRanges'][0]['ranges'][0]['endIndex']
+
+    def get_text_in_indices_from_doc_obj(self,start_index:int,end_index:int):
         extracted = []
         content = self.doc.get('body').get('content', [])
 
@@ -118,7 +114,41 @@ class GoogleDocsEditor(GoogleDocsAPI):
                                 if rel_start < rel_end:
                                     extracted.append(text[rel_start:rel_end])
         return "".join(extracted)
+    
+        
+    def get_text_in_range_from_doc_obj(self,heading:str):
+        """
+        Extracts raw text from a specific named range (heading) within the current document object.
+        Iterates through document elements and slices text runs based on UTF-16 indices.
+        """
+        
+        named_range = self.find_named_range(heading)
+        start_index = named_range['namedRanges'][0]['ranges'][0]['startIndex']
+        end_index = named_range['namedRanges'][0]['ranges'][0]['endIndex']
+        return self.get_text_in_indicies_from_doc_obj(start_index=start_index,end_index=end_index)
+        '''
+        extracted = []
+        content = self.doc.get('body').get('content', [])
 
+        for element in content:
+            el_start = element.get('startIndex')
+            el_end = element.get('endIndex')
+
+            if el_start is not None and el_end is not None:
+                if el_start < end_index and el_end > start_index:
+                    if 'paragraph' in element:
+                        for part in element['paragraph']['elements']:
+                            if 'textRun' in part:
+                                text = part['textRun']['content']
+                                p_start = part.get('startIndex')
+
+                                rel_start = max(0, start_index - p_start)
+                                rel_end = min(len(text), end_index - p_start)
+
+                                if rel_start < rel_end:
+                                    extracted.append(text[rel_start:rel_end])
+        return "".join(extracted)
+        '''
 
     def create_google_doc(self, name:str, courseid:str):
         """
@@ -413,6 +443,39 @@ class GoogleDocsEditor(GoogleDocsAPI):
         print(f"Printing to {content[-1].get('endIndex') - 1}")
         return (content[-1].get('endIndex'),content[-1].get('endIndex') - 1,-1)
 
+
+    def catch_skips(self):
+        """
+        Scans all named ranges and catches gaps between them if there's extra content between ranges.
+        """
+        #self.get_document_structure(document_id=document_id)
+        document = self.doc
+        named_ranges = document.get("namedRanges",{})
+        sorted_items = sorted(named_ranges.items(),key=lambda item: item[1].get("namedRanges", [{}])[0]
+                               .get("ranges", [{}])[0]
+                               .get("endIndex", 0)) 
+        skips= []
+        for i in range(1,len(sorted_items)):
+            prev_ranges = sorted_items[i-1][1]\
+                        .get("namedRanges",[{}])[0]\
+                        .get("ranges",[{}])[0]
+            curr_ranges = sorted_items[i][1]\
+                        .get("namedRanges",[{}])[0]\
+                        .get("ranges",[{}])[0]
+            prevEndIdx = prev_ranges.get("endIndex",0)
+            currStartIdx = curr_ranges.get("startIndex",0)
+            #heading = sorted_items[i][0]
+            diff = currStartIdx - prevEndIdx
+            print(diff)
+            if((diff)>self.text_utf16_len('\n') and diff>MIN_BLOCK_LEN): 
+                print("hit")
+                skips.append(
+                    {
+                        'startIndex': prevEndIdx+1,
+                        'endIndex': currStartIdx-1
+                    }
+                )
+        return skips
 
     def mutate_named_ranges(self,document_id:str):
         """

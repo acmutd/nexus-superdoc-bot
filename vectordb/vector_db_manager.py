@@ -65,6 +65,52 @@ class VectorDBManager(BaseModel):
         timestamp = int(time.time() * 1000)
         return f"{course_id}_{timestamp}"  
     
+
+    def _chunk_list(self, lst: list, n: int):
+        """Helper generator to yield successive n-sized chunks from lst."""
+        for i in range(0, len(lst), n):
+            yield lst[i:i + n]
+
+    def batch_upsert_vectors(self, vectors: list[dict], course_id: str):
+        """
+        Safely pushes massive arrays of vectors to Pinecone by chunking them
+        into blocks of 1,000 to respect API rate limits.
+        """
+        if not vectors:
+            return
+        
+        index = self.pc.Index(self.index_name)
+        total_batches = 0
+        
+        print(f"Starting batch upsert of {len(vectors)} vectors in namespace: {course_id}...")
+        for chunk in self._chunk_list(vectors, 1000):
+            index.upsert(vectors=chunk, namespace=course_id)
+            total_batches += 1
+            
+        print(f"Successfully upserted {len(vectors)} vectors across {total_batches} batches.")
+
+    def batch_delete_vectors(self, vector_ids: list[str], course_id: str):
+        """
+        Safely deletes massive arrays of vector IDs from Pinecone by chunking them
+        into blocks of 1,000.
+        """
+        if not vector_ids:
+            return
+            
+        index = self.pc.Index(self.index_name)
+        total_batches = 0
+        
+        print(f"Starting batch deletion of {len(vector_ids)} vectors in namespace: {course_id}...")
+        for chunk in self._chunk_list(vector_ids, 1000):
+            index.delete(ids=chunk, namespace=course_id)
+            total_batches += 1
+            
+        print(f"Successfully deleted {len(vector_ids)} vectors across {total_batches} batches.")
+
+
+
+
+
     def create_vectordb_heading(self, heading_text: str, course_id: str, superdoc_id: str) -> None:
         """
         Creates a new heading entry in vector DB with dynamically generated OpenAI embedding.
