@@ -93,6 +93,10 @@ class GoogleDocsEditor(GoogleDocsAPI):
         super().__init__()
 
     def get_text_in_indices_from_doc_obj(self,start_index:int,end_index:int):
+        """
+        Extracts raw text given a start_index and end_index within the current document object.
+        Iterates through document elements and slices text runs based on UTF-16 indices.
+        """
         extracted = []
         content = self.doc.get('body').get('content', [])
 
@@ -119,13 +123,12 @@ class GoogleDocsEditor(GoogleDocsAPI):
     def get_text_in_range_from_doc_obj(self,heading:str):
         """
         Extracts raw text from a specific named range (heading) within the current document object.
-        Iterates through document elements and slices text runs based on UTF-16 indices.
         """
         
         named_range = self.find_named_range(heading)
         start_index = named_range['namedRanges'][0]['ranges'][0]['startIndex']
         end_index = named_range['namedRanges'][0]['ranges'][0]['endIndex']
-        return self.get_text_in_indicies_from_doc_obj(start_index=start_index,end_index=end_index)
+        return self.get_text_in_indices_from_doc_obj(start_index=start_index,end_index=end_index)
         '''
         extracted = []
         content = self.doc.get('body').get('content', [])
