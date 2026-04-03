@@ -61,7 +61,7 @@ class VectorDBManager(BaseModel):
         return self.pc.Index(index_name)
     
     def generate_timestamp_id(self,course_id):
-       """Generates a collision-resistant ID using the course context and epoch time."""
+        """Generates a collision-resistant ID using the course context and epoch time."""
         timestamp = int(time.time() * 1000)
         return f"{course_id}_{timestamp}"  
     
@@ -138,7 +138,7 @@ class VectorDBManager(BaseModel):
                 "values": embedding,
                 "metadata": {
                     "position": [heading_text],
-                    "source": superdoc_id,
+                    "superdoc": superdoc_id,
                     "heading": heading_text
                 }
             }
@@ -172,7 +172,7 @@ class VectorDBManager(BaseModel):
             # Query for entries with the specified heading
             response = index.query(
                 top_k=100,
-                filter={"source": superdoc_id, "heading": heading},
+                filter={"superdoc": superdoc_id, "heading": heading},
                 vector=[0] * 1536,  # Default OpenAI embedding dimension
                 namespace=course_id,
                 include_metadata=True
@@ -237,7 +237,7 @@ class VectorDBManager(BaseModel):
                 "values": new_embedding,
                 "metadata": {
                     "position": [new_heading_text],
-                    "source": superdoc_id,
+                    "superdoc": superdoc_id,
                     "heading": new_heading_text
                 }
             }
@@ -330,7 +330,7 @@ class VectorDBManager(BaseModel):
             # Delete old entries
             response = index.query(
                 top_k=100,
-                filter={"source": superdoc_id, "heading": heading},
+                filter={"superdoc": superdoc_id, "heading": heading},
                 vector=[0] * 1536,
                 namespace=course_id,
                 include_metadata=True

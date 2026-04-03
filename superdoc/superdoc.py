@@ -1,6 +1,6 @@
 
 import numpy as np
-
+import re
 from langchain_openai import OpenAIEmbeddings,ChatOpenAI
 from vectordb.vector_db_manager import VectorDBManager
 from pinecone import Pinecone, IndexModel, ServerlessSpec
@@ -165,23 +165,23 @@ class superdoc():
         batch methods for high-efficiency synchronization.
         """
         #Fetch current live doc structure and existing DB headings via the manager
-        self.docs_editor.get_document_structure() 
-        doc_headings = self.db_manager.get_all_headings_for_doc(
+        self.docs_editor.get_document_structure(document_id=self.DOCUMENT_ID) 
+        doc_headings = self.db.get_all_headings_for_doc(
             course_id=self.COURSE_ID, 
             superdoc_id=self.DOCUMENT_ID
         )
 
         delete_ids = []
         headings_to_embed = []
-        
+        print(f"Num of vector-db-headings:{doc_headings}")
         #Extract and analyze document content
         for db_entry in doc_headings: 
             heading_text = db_entry.get("heading")
             vector_id = db_entry.get("id")
             
             # Extract text using the decoupled index-based method
-            content_under_heading = self.get_text_in_range_from_doc_obj(heading_text)
-            
+            content_under_heading = self.docs_editor.get_text_in_range_from_doc_obj(heading_text)
+            print(f"Content of {heading_text}: {content_under_heading}")
             # Case 1: Heading or its content no longer exists in the document
             if not content_under_heading: 
                 delete_ids.append(vector_id)
@@ -205,12 +205,12 @@ class superdoc():
             print(f"Batch embedding {len(headings_to_embed)} changed headings...")
             
             # Chunking OpenAI requests specifically to stay under token/payload limits
-            for text_chunk in self.chunk_list(headings_to_embed, 500):
+            for text_chunk in self._chunk_list(headings_to_embed, 500):
                 embedded_vectors = self.emb_model.embed_documents(text_chunk)
                 
                 for text, vector in zip(text_chunk, embedded_vectors):
                     vectors_to_upsert.append({
-                        "id": self.db_manager.generate_timestamp_id(self.COURSE_ID),
+                        "id": self.db.generate_timestamp_id(self.COURSE_ID),
                         "values": vector,
                         "metadata": {
                             "superdoc": self.DOCUMENT_ID,
@@ -222,13 +222,13 @@ class superdoc():
         # The manager handles the 1,000-vector Pinecone limit internally.
         
         if delete_ids:
-            self.db_manager.batch_delete_vectors(
+            self.db.batch_delete_vectors(
                 vector_ids=delete_ids, 
                 course_id=self.COURSE_ID
             )
 
         if vectors_to_upsert:
-            self.db_manager.batch_upsert_vectors(
+            self.db.batch_upsert_vectors(
                 vectors=vectors_to_upsert, 
                 course_id=self.COURSE_ID
             )
@@ -236,93 +236,100 @@ class superdoc():
         print("Superdoc synchronization complete.")
                  
 
-   def fix_new_content(self): 
+    def fix_new_content(self): 
         """
-        Detects new content in document skips, generates headings via batch LLM,
-        inserts them into the Google Doc, and syncs them as vectors to Pinecone
-        using the optimized batch methods in VectorDBManager.
+        Scans un-indexed document gaps for user-defined <HEADING>: tags.
+        Extracts the heading, formats it in the Doc, and syncs to Pinecone.
         """
-        # Fetch live structure and identify gaps
-        document_structure = self.docs_editor.get_document_structure() 
-        skips = self.catch_skips()
+        # Fetch live structure and identify gaps (skips)
+        self.docs_editor.get_document_structure(document_id=self.DOCUMENT_ID) 
+        skips = self.docs_editor.catch_skips()
         
-        skips_to_process = []
-        samples_for_llm = []
+        # This will hold the final payloads for Pinecone
+        vectors_to_upsert = []
         
-        #Extract and sample text from skips
+        # Queue for batch updating Google Docs
+        headings_queue = []
+
+        # Iterate through skips to find the <HEADING>: pattern
         for skip in skips:
             start_idx = skip.get('startIndex')
             end_idx = skip.get('endIndex')
             
-            # Using your decoupled extraction method
+            # Extract raw text from this specific skip
             text = self.get_text_in_indices_from_doc_obj(start_idx, end_idx)
             
-            # Length threshold
-            if text and len(text) > 30: 
-                skips_to_process.append(skip)
+            if not text:
+                continue
+
+            # Regex finds anything inside < > followed by a colon
+            # Example: matches "<Biology Notes>:" and captures "Biology Notes"
+            matches = list(re.finditer(r"<(.*?)>:", text))
+
+            if not matches:
+                continue
+
+            # Process matches to build the queues
+            for match in matches:
+                extracted_heading = match.group(1).strip()
                 
-                # Turn the text into a constant amount for the LLM
-                if len(text) <= 100:
-                    samples_for_llm.append(text)
-                else:
-                    start_slice = text[:30]
-                    mid_idx = len(text) // 2
-                    middle_slice = text[mid_idx - 15 : mid_idx + 15]
-                    end_slice = text[-30:]
-                    sampled_text = f"{start_slice}...{middle_slice}...{end_slice}"
-                    samples_for_llm.append(sampled_text)
+                # Get the substring in the text leading up to this specific match
+                text_before_match = text[:match.start()]
+                
+                # Use utf-16 len calcs for index mapping
+                utf16_offset = self.docs_editor.text_utf16_len(text_before_match)
+                tag_start_in_doc = start_idx + utf16_offset
 
-        if not samples_for_llm:
-            print("No new content gaps detected above minimum threshold.")
-            return
+                print(f"Detected manual heading tag: '{extracted_heading}'")
 
-        #Batch generate headings for the sampled text
-        print(f"Generating headings for {len(samples_for_llm)} new content blocks...")
-        new_headings = self.generate_headings_from_sentences(samples_for_llm)
-        
-        #Batch update Google Docs and prep text for embedding
-        print(f"Applying {len(new_headings)} new headings to Google Docs...")
-        
-        vectors_to_upsert = []
-        
-        for i, heading in enumerate(new_headings):
-            skip_data = skips_to_process[i]
-            original_start = skip_data['startIndex']
-            original_end = skip_data['endIndex']
-            
-            # Action on Google Doc
-            self.docs_editor.create_heading_and_named_range(
-                heading=heading,
-                start_index=original_start,
-                end_index=original_end
-            )
-            
-            # Queue the raw string for the OpenAI batch call
-            vectors_to_upsert.append(heading)
+                # Queue for Google Docs Batch Operation
+                headings_queue.append({
+                    'heading': extracted_heading,
+                    'startIndex': tag_start_in_doc
+                })
+
+                # Queue for Pinecone Vector DB
+                # Sample the content directly following the tag
+                content_after_tag = text[match.end():].strip()[:500] 
+                
+                vectors_to_upsert.append({
+                    "heading": extracted_heading,
+                    "content_sample": content_after_tag
+                })
+
+        # Batch update Google Docs with all gathered headings
+        if headings_queue:
+            self.docs_editor.batch_create_headings_and_named_ranges(headings_queue)
 
         # Batch process embeddings and delegate upsert to VectorDBManager
         if vectors_to_upsert:
-            print(f"Batch embedding {len(vectors_to_upsert)} new headings via OpenAI...")
-            embedded_vectors = self.emb_model.embed_documents(vectors_to_upsert)
+            print(f"Batch embedding {len(vectors_to_upsert)} manual headings...")
+            
+            # Extract just the heading strings for the embedding model
+            heading_strings = [v["heading"] for v in vectors_to_upsert]
+            embedded_vectors = self.emb_model.embed_documents(heading_strings)
             
             pinecone_payload = []
-            for text, vector in zip(vectors_to_upsert, embedded_vectors):
+            for i, vector in enumerate(embedded_vectors):
+                original_data = vectors_to_upsert[i]
                 pinecone_payload.append({
-                    "id": self.db_manager.generate_timestamp_id(self.COURSE_ID),
+                    "id": self.db.generate_timestamp_id(self.COURSE_ID),
                     "values": vector,
                     "metadata": {
                         "superdoc": self.DOCUMENT_ID,
-                        "heading": text,
+                        "heading": original_data["heading"],
+                        "content_preview": original_data["content_sample"][:200] 
                     }
                 })
             
-            # Utilizing the new bulletproof batch method we just built!
-            self.db_manager.batch_upsert_vectors(
+            # Direct push to your optimized manager
+            self.db.batch_upsert_vectors(
                 vectors=pinecone_payload, 
                 course_id=self.COURSE_ID
             )
 
-        print("Superdoc structure generation and vector sync complete.")
+        print("Superdoc manual tag sync complete.")
+
 
     def _chunk_list(self, lst, n):
         """Helper generator to split lists into batch-safe payloads."""
@@ -426,7 +433,9 @@ if __name__ == '__main__':
 
     sd = superdoc(DOCUMENT_ID='13OiEdtje4wMZGT1LEfVmj3RmAeR1BchUF6eZBaICH8w',COURSE_ID="RHET1302")
     #sd.merge_pdf_hierarchical(stream=strm)
-    sd.create_document(name="Hellow",course_id="RHET1302")
+    #sd.create_document(name="Hellow",course_id="RHET1302")
     #sd.merge_pdf()
    # sd.update_heading(old_heading="Introduction",new_heading="GoofyGoober")
     #sd.create_heading(new_heading="Trump giving Kirk to Bubba")
+    print(f"Heading content:{sd.docs_editor.get_text_in_range_from_doc_obj("Trump giving Kirk to Stein")}")
+    sd.fix_new_content()

@@ -7,7 +7,6 @@ import pymupdf4llm
 import pymupdf
 from markdown_it import MarkdownIt  
 
-from pdf_pipeline.anchor_vector import load_embedding
 
 
 import numpy as np

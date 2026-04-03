@@ -126,6 +126,8 @@ class GoogleDocsEditor(GoogleDocsAPI):
         """
         
         named_range = self.find_named_range(heading)
+        if not named_range: 
+            return ""
         start_index = named_range['namedRanges'][0]['ranges'][0]['startIndex']
         end_index = named_range['namedRanges'][0]['ranges'][0]['endIndex']
         return self.get_text_in_indices_from_doc_obj(start_index=start_index,end_index=end_index)
@@ -329,7 +331,85 @@ class GoogleDocsEditor(GoogleDocsAPI):
             ranges.append((startIndex,endIndex))
         return ranges
 
-                
+    def batch_create_headings_and_named_ranges(self, headings_to_apply: list[dict]):
+        """
+        Takes a list of dictionaries containing heading text and indices,
+        and applies them to the Google Doc in a single batched API call.
+        
+        Args:
+            headings_to_apply: A list of dicts formatted like:
+                               [{'heading': 'Biology', 'startIndex': 450}, ...]
+        """
+        if not headings_to_apply:
+            return
+
+        #CRITICAL: Sort by startIndex in REVERSE order.
+        # This prevents text shifts from breaking our index calculations!
+        headings_sorted = sorted(headings_to_apply, key=lambda x: x['startIndex'], reverse=True)
+        
+        all_requests = []
+        
+        for item in headings_sorted:
+            new_heading = item['heading']
+            start_idx = item['startIndex']
+            
+            # Quick duplicate check
+            named_range = self.find_named_range(heading=new_heading)
+            if named_range: 
+                print(f"[WARN] Heading: '{new_heading}' already exists. Skipping.")
+                continue
+            
+            text_to_insert = new_heading + ":\n\n"
+            
+            # Using your UTF-16 length calculation logic
+            new_heading_len = len(text_to_insert.encode("utf-16-le")) // 2
+            end_idx = start_idx + new_heading_len
+            
+            # Append the isolated requests for this specific heading
+            all_requests.extend([
+                {
+                    'insertText': {
+                        'location': {
+                            'index': start_idx
+                        },
+                        'text': text_to_insert
+                    }
+                },
+                {
+                    'createNamedRange': {
+                        'name': new_heading,
+                        'range': {
+                            'startIndex': start_idx,
+                            'endIndex': end_idx
+                        }
+                    }
+                },
+                {
+                    'updateParagraphStyle': {
+                        'paragraphStyle': {'namedStyleType': 'HEADING_2'},
+                        'range': {
+                            'startIndex': start_idx,
+                            'endIndex': end_idx
+                        },
+                        'fields': 'namedStyleType'
+                    }
+                },
+                {
+                    'updateTextStyle': {
+                        'textStyle': {'bold': True},
+                        'range': {
+                            'startIndex': start_idx,
+                            'endIndex': end_idx
+                        },
+                        'fields': 'bold'
+                    }
+                }
+            ])
+            
+        #Fire them all in a single payload
+        if all_requests:
+            print(f"Batch updating Google Docs with {len(headings_to_apply)} new headings...")
+            self.batch_update(requests=all_requests)           
         
     def delete_heading(self,old_heading:str):
         """Removes both the text and the metadata associated with a specific heading.""" 
@@ -453,31 +533,72 @@ class GoogleDocsEditor(GoogleDocsAPI):
         """
         #self.get_document_structure(document_id=document_id)
         document = self.doc
-        named_ranges = document.get("namedRanges",{})
-        sorted_items = sorted(named_ranges.items(),key=lambda item: item[1].get("namedRanges", [{}])[0]
-                               .get("ranges", [{}])[0]
-                               .get("endIndex", 0)) 
-        skips= []
-        for i in range(1,len(sorted_items)):
+        named_ranges = document.get("namedRanges", {})
+        
+        # Guard clause in case there are no named ranges at all
+        if not named_ranges:
+            print("No named ranges found in document.")
+            return []
+
+        sorted_items = sorted(
+            named_ranges.items(),
+            key=lambda item: item[1].get("namedRanges", [{}])[0]
+                                   .get("ranges", [{}])[0]
+                                   .get("endIndex", 0)
+        ) 
+        
+        skips = []
+        
+        # Catch gaps between existing named ranges
+        for i in range(1, len(sorted_items)):
             prev_ranges = sorted_items[i-1][1]\
-                        .get("namedRanges",[{}])[0]\
-                        .get("ranges",[{}])[0]
+                        .get("namedRanges", [{}])[0]\
+                        .get("ranges", [{}])[0]
             curr_ranges = sorted_items[i][1]\
-                        .get("namedRanges",[{}])[0]\
-                        .get("ranges",[{}])[0]
-            prevEndIdx = prev_ranges.get("endIndex",0)
-            currStartIdx = curr_ranges.get("startIndex",0)
-            #heading = sorted_items[i][0]
+                        .get("namedRanges", [{}])[0]\
+                        .get("ranges", [{}])[0]
+            
+            prevEndIdx = prev_ranges.get("endIndex", 0)
+            currStartIdx = curr_ranges.get("startIndex", 0)
+            
             diff = currStartIdx - prevEndIdx
-            print(diff)
-            if((diff)>self.text_utf16_len('\n') and diff>MIN_BLOCK_LEN): 
+            print(f"Gap between ranges: {diff}")
+            
+            if diff > self.text_utf16_len('\n') and diff > MIN_BLOCK_LEN: 
                 print("hit")
-                skips.append(
-                    {
-                        'startIndex': prevEndIdx+1,
-                        'endIndex': currStartIdx-1
-                    }
-                )
+                skips.append({
+                    'startIndex': prevEndIdx + 1,
+                    'endIndex': currStartIdx - 1
+                })
+
+        # Grab the last named-range and check for trailing content
+        if sorted_items: 
+            last_range = sorted_items[-1][1]\
+                            .get("namedRanges", [{}])[0]\
+                            .get("ranges", [{}])[0]
+
+            print(f"Last Range: {last_range}")
+            last_range_end = last_range.get("endIndex", 0)
+
+            # Find total length of doc-body 
+            doc_body = document.get("body", {})
+            doc_content = doc_body.get("content", [])
+
+            if doc_content: 
+                doc_end_index = doc_content[-1].get("endIndex", 0)
+
+                usable_doc_end = doc_end_index - 1
+                final_diff = usable_doc_end - last_range_end
+                print(f"Trailing Indices: {usable_doc_end}, {last_range_end}")
+                print(f"Trailing gap at end: {final_diff}")
+                
+                if final_diff > self.text_utf16_len('\n') and final_diff > MIN_BLOCK_LEN: 
+                    print("Trailing content gap detected!")
+                    skips.append({
+                        'startIndex': last_range_end + 1, 
+                        'endIndex': usable_doc_end
+                    })
+                    
         return skips
 
     def mutate_named_ranges(self,document_id:str):
