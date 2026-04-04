@@ -257,7 +257,7 @@ class superdoc():
             end_idx = skip.get('endIndex')
             
             # Extract raw text from this specific skip
-            text = self.get_text_in_indices_from_doc_obj(start_idx, end_idx)
+            text = self.docs_editor.get_text_in_indices_from_doc_obj(start_idx, end_idx)
             
             if not text:
                 continue
@@ -437,5 +437,5 @@ if __name__ == '__main__':
     #sd.merge_pdf()
    # sd.update_heading(old_heading="Introduction",new_heading="GoofyGoober")
     #sd.create_heading(new_heading="Trump giving Kirk to Bubba")
-    print(f"Heading content:{sd.docs_editor.get_text_in_range_from_doc_obj("Trump giving Kirk to Stein")}")
+    #print(f"Heading content:{sd.docs_editor.get_text_in_range_from_doc_obj("Trump giving Kirk to Stein")}")
     sd.fix_new_content()

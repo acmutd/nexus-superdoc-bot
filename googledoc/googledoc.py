@@ -24,8 +24,9 @@ from dynamodb.dynamodb import append_to_course_docs, fetch_all_course_docs
 # If modifying these SCOPES, delete the file token.json.
 SCOPES = ["https://www.googleapis.com/auth/documents","https://www.googleapis.com/auth/drive.file"] # Use full scope like 'https://www.googleapis.com/auth/documents' for write operations
 
-MIN_BLOCK_LEN = 30
-
+MIN_BLOCK_LEN = 2
+#Hella bad practice, but works for maintaining a buffer between named ranges
+MIN_RANGE_BUFFER = 3
 
 class GoogleDocsAPI:
     """
@@ -258,15 +259,27 @@ class GoogleDocsEditor(GoogleDocsAPI):
         if named_range: 
             raise Exception(f"Heading: {new_heading} already exists")
         
-        newHeadingLen = len((new_heading+":\n\n").encode("utf-16-le"))//2
-        endIndex = startIndex+newHeadingLen
+        #newHeadingLen = len((new_heading+":\n\n").encode("utf-16-le"))//2
+        #endIndex = startIndex+newHeadingLen
+        
+        protected_text = f"{new_heading}:"
+        padding = "\n\n"
+        full_text = protected_text + padding
+        
+        # Calculate indices based on specific parts
+        protected_len = self.text_utf16_len(protected_text)
+        total_len = self.text_utf16_len(full_text)
+        
+        endIndex_for_range = startIndex + protected_len
+        endIndex_for_formatting = startIndex + total_len
+        
         requests = [
         {
             'insertText': {
                 'location': {
                     'index': startIndex
                 },
-                    'text': new_heading+":\n\n"
+                    'text': full_text#new_heading+":\n\n"
             }
         },
         # Create a new named range for the updated heading
@@ -275,7 +288,7 @@ class GoogleDocsEditor(GoogleDocsAPI):
                 'name': new_heading,
                 'range': {
                     'startIndex': startIndex,
-                    'endIndex': endIndex
+                    'endIndex': endIndex_for_range
                 }
             }
         },
@@ -284,7 +297,7 @@ class GoogleDocsEditor(GoogleDocsAPI):
                 'paragraphStyle': {'namedStyleType': 'HEADING_2'},
                 'range': {
                     'startIndex': startIndex,
-                    'endIndex': endIndex
+                    'endIndex': endIndex_for_range
                 },
                 'fields': 'namedStyleType'
             }
@@ -294,20 +307,22 @@ class GoogleDocsEditor(GoogleDocsAPI):
                 'textStyle': {'bold': True},
                 'range': {
                     'startIndex': startIndex,
-                    'endIndex': endIndex
+                    'endIndex': endIndex_for_range
                 },
                 'fields': 'bold'
             }
         }
     ]
         self.batch_update(requests=requests)
-        return (startIndex,endIndex)
+        return (startIndex,endIndex_for_formatting)
     
     
     def create_headings(self,headings:list[str]):
         """
         Batch-processes a list of strings, creating new headings for any that don't exist
         and returning the start/end indices for all.
+
+        --refractor to make more efficent in future(batch update)
         """ 
         ranges = []
         processed = {}
@@ -359,12 +374,16 @@ class GoogleDocsEditor(GoogleDocsAPI):
                 print(f"[WARN] Heading: '{new_heading}' already exists. Skipping.")
                 continue
             
-            text_to_insert = new_heading + ":\n\n"
+            #text_to_insert = new_heading + ":\n\n"
             
-            # Using your UTF-16 length calculation logic
-            new_heading_len = len(text_to_insert.encode("utf-16-le")) // 2
-            end_idx = start_idx + new_heading_len
+            # Using UTF-16 length calculation logic
+            #new_heading_len = len(text_to_insert.encode("utf-16-le")) // 2
+            #end_idx = start_idx + new_heading_len
             
+            protected_text = f"{new_heading}:"
+            full_text = protected_text + "\n\n"
+            protected_len = self.text_utf16_len(protected_text)
+
             # Append the isolated requests for this specific heading
             all_requests.extend([
                 {
@@ -372,7 +391,7 @@ class GoogleDocsEditor(GoogleDocsAPI):
                         'location': {
                             'index': start_idx
                         },
-                        'text': text_to_insert
+                        'text': full_text
                     }
                 },
                 {
@@ -380,7 +399,7 @@ class GoogleDocsEditor(GoogleDocsAPI):
                         'name': new_heading,
                         'range': {
                             'startIndex': start_idx,
-                            'endIndex': end_idx
+                            'endIndex': start_idx+protected_len#end_idx
                         }
                     }
                 },
@@ -389,7 +408,7 @@ class GoogleDocsEditor(GoogleDocsAPI):
                         'paragraphStyle': {'namedStyleType': 'HEADING_2'},
                         'range': {
                             'startIndex': start_idx,
-                            'endIndex': end_idx
+                            'endIndex': start_idx + protected_len#end_idx
                         },
                         'fields': 'namedStyleType'
                     }
@@ -399,7 +418,7 @@ class GoogleDocsEditor(GoogleDocsAPI):
                         'textStyle': {'bold': True},
                         'range': {
                             'startIndex': start_idx,
-                            'endIndex': end_idx
+                            'endIndex': start_idx + protected_len#end_idx
                         },
                         'fields': 'bold'
                     }
@@ -484,7 +503,7 @@ class GoogleDocsEditor(GoogleDocsAPI):
                 'name': new_heading,
                 'range': {
                     'startIndex': startIndex,
-                    'endIndex': endIndex-1+(newHeadingLen-oldHeadingLen)
+                    'endIndex': endIndex-1+(newHeadingLen-oldHeadingLen)-MIN_RANGE_BUFFER
                 }
             }
         },
@@ -642,7 +661,7 @@ class GoogleDocsEditor(GoogleDocsAPI):
                             'name': sorted_items[i-1][0],
                             'range': {
                                 'startIndex': prev_ranges.get("startIndex",0),
-                                'endIndex': prevEndIdx-1+(diff)
+                                'endIndex': prevEndIdx-1+(diff)-MIN_RANGE_BUFFER
                             }
                         }
                     }
@@ -750,7 +769,7 @@ class GoogleDocsEditor(GoogleDocsAPI):
                         'name': heading,
                         'range': {
                             'startIndex': startIndex,
-                            'endIndex': endIndex
+                            'endIndex': max(startIndex + 1, endIndex - 1)
                         }
                     }   
                 }
