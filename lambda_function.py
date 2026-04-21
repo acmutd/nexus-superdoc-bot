@@ -65,7 +65,8 @@ def handle_merge_pdf(req: MergePDFRequest):
     from superdoc.superdoc import superdoc
 
     try:
-        with urllib.request.urlopen(req.pdfUrl) as response:
+        request = urllib.request.Request(req.pdfUrl, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(request) as response:
             if response.status != 200:
                 raise HTTPException(status_code=400, detail="Failed to download PDF")
             pdf_stream = BytesIO(response.read())
@@ -76,6 +77,8 @@ def handle_merge_pdf(req: MergePDFRequest):
         
         return {"status": "success", "documentId": sd.DOCUMENT_ID}
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/headings/create")
@@ -130,8 +133,8 @@ def create_new_document(req: CreateDocRequest):
     try:
         # Note: Using the standalone create_document method in the class
         sd = superdoc(DOCUMENT_ID="DUMMY", COURSE_ID=req.courseId)
-        doc_map = sd.get_docids(course_id=course_id)
-        if doc_map.get(course_id,None):
+        doc_map = sd.get_docids(course_id=req.courseId)
+        if doc_map.get(req.courseId, None):
             raise HTTPException(status_code=400, detail=f"A superdoc with the name {req.documentName} already exists!")
         response = sd.create_document(name=req.documentName, course_id=req.courseId)
 

@@ -90,6 +90,8 @@ class GoogleDocsEditor(GoogleDocsAPI):
     def get_text_in_range_from_doc_obj(self,heading:str):
         """Helper to extract text from a doc object already in memory."""
         named_range = self.find_named_range(heading)
+        if not named_range or not named_range.get('namedRanges'):
+            return ""
         start_index = named_range['namedRanges'][0]['ranges'][0]['startIndex']
         end_index = named_range['namedRanges'][0]['ranges'][0]['endIndex']
         extracted = []
