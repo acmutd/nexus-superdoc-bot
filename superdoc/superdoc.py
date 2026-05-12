@@ -66,6 +66,8 @@ class superdoc():
         New tree-based merge functionality that respects document hierarchy 
         and handles custom heading injection.
         """
+        print(f"---Synchronizing Document---")
+        self.sync_headings()
         print(f"--- Starting Hierarchical Merge for Doc: {self.DOCUMENT_ID} ---")
         
         # 1. Convert PDF to Syntax Tree (Markdown-it structure)
@@ -154,6 +156,9 @@ class superdoc():
         self.docs_editor.update_heading(old_heading=old_heading,new_heading=new_heading)
         self.db.replace_vectordb_heading_with_text(old_heading=old_heading,new_heading_text=new_heading,course_id=self.COURSE_ID,superdoc_id=self.DOCUMENT_ID)
 
+    def sync_headings(self): 
+        self.fix_new_content() 
+        self.fix_heading_update()
 
 
     def fix_heading_update(self): 
@@ -238,6 +243,8 @@ class superdoc():
         """
         Scans un-indexed document gaps for user-defined <HEADING>: tags.
         Extracts the heading, formats it in the Doc, and syncs to Pinecone.
+        
+        **NOTE**: Using pineconedb embeddings not openai
         """
         # Fetch live structure and identify gaps (skips)
         self.docs_editor.get_document_structure(document_id=self.DOCUMENT_ID) 
@@ -320,7 +327,7 @@ class superdoc():
                     }
                 })
             
-            # Direct push to your optimized manager
+            # Direct push to vector db
             self.db.batch_upsert_vectors(
                 vectors=pinecone_payload, 
                 course_id=self.COURSE_ID
@@ -430,7 +437,8 @@ if __name__ == '__main__':
     strm = BytesIO(pdf_bytes)
 
     sd = superdoc(DOCUMENT_ID='1Q1whz1kFN9wj1_mamWgaDbKh7przNmc5owdOSNovC04',COURSE_ID="Goof1202")
-    sd.merge_pdf_hierarchical(stream=strm)
+    #sd.merge_pdf_hierarchical(stream=strm)
+    sd.sync_headings()
     #sd.create_document(name="Hellow",course_id="RHET1302")
     #sd.merge_pdf()
    # sd.update_heading(old_heading="Introduction",new_heading="GoofyGoober")
