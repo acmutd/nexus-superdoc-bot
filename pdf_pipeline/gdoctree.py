@@ -105,6 +105,10 @@ class GdocTreeNode():
         characters have been inserted) so that the next node knows exactly where to 
         start its insertion in the Google Doc.
         """
+
+        #Adding protective padding to the start between this and every other node
+        # (cuz we made every range end 2 indexes minus the position they're supposed to be)
+        start_index+=text_utf16_len("\n")
         all_text_requests = []
         all_format_requests = []
         current_offset = 0
