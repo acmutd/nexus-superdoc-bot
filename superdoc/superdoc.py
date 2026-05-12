@@ -40,15 +40,13 @@ class superdoc():
         self.docs_editor.get_document_structure(document_id=self.DOCUMENT_ID)
         self.emb_model =OpenAIEmbeddings(api_key=os.getenv("OPENAI_API_KEY")) 
     
-    @staticmethod
-    def pdf_to_syntree(stream:BytesIO) -> SyntaxTreeNode:
+    def pdf_to_syntree(self,stream:BytesIO) -> SyntaxTreeNode:
         doc = pymupdf.open(stream=stream)
         markdown = pymupdf4llm.to_markdown(doc)
         mdit = MarkdownIt()
         md = mdit.parse(markdown)
         return SyntaxTreeNode(md)
     
-    @staticmethod
     def stree_to_etree(self,stree:SyntaxTreeNode) -> EmbedTreeNode:
         print("Building Semantic Tree...")
         root = EmbedTreeNode._init_tree(root_node=stree, emb_model=self.emb_model)
@@ -431,11 +429,11 @@ if __name__ == '__main__':
         pdf_bytes = f.read()
     strm = BytesIO(pdf_bytes)
 
-    sd = superdoc(DOCUMENT_ID='13OiEdtje4wMZGT1LEfVmj3RmAeR1BchUF6eZBaICH8w',COURSE_ID="RHET1302")
-    #sd.merge_pdf_hierarchical(stream=strm)
+    sd = superdoc(DOCUMENT_ID='1Q1whz1kFN9wj1_mamWgaDbKh7przNmc5owdOSNovC04',COURSE_ID="Goof1202")
+    sd.merge_pdf_hierarchical(stream=strm)
     #sd.create_document(name="Hellow",course_id="RHET1302")
     #sd.merge_pdf()
    # sd.update_heading(old_heading="Introduction",new_heading="GoofyGoober")
     #sd.create_heading(new_heading="Trump giving Kirk to Bubba")
     #print(f"Heading content:{sd.docs_editor.get_text_in_range_from_doc_obj("Trump giving Kirk to Stein")}")
-    sd.fix_new_content()
+    #sd.fix_new_content()
